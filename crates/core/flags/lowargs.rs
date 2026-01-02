@@ -70,6 +70,7 @@ pub(crate) struct LowArgs {
     pub(crate) logging: Option<LoggingMode>,
     pub(crate) max_columns: Option<u64>,
     pub(crate) max_columns_preview: bool,
+    pub(crate) max_columns_preview_center: bool,
     pub(crate) max_count: Option<u64>,
     pub(crate) max_depth: Option<usize>,
     pub(crate) max_filesize: Option<u64>,

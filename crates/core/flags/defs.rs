@@ -3771,7 +3771,7 @@ impl Flag for MaxColumns {
         "max-columns"
     }
     fn doc_variable(&self) -> Option<&'static str> {
-        Some("NUM")
+        Some("NUM[SUFFIX]")
     }
     fn doc_category(&self) -> Category {
         Category::Output
@@ -3784,13 +3784,38 @@ impl Flag for MaxColumns {
 When given, ripgrep will omit lines longer than this limit in bytes. Instead of
 printing long lines, only the number of matches in that line is printed.
 .sp
+The value may include an optional suffix:
+.sp
+.TP 12
+\fBp\fP
+Enable preview mode, showing a truncated line instead of just omitting it.
+This is equivalent to also passing \flag{max-columns-preview}.
+.TP 12
+\fBc\fP
+Enable centered preview mode, which shows context centered around the first
+match. This implies the \fBp\fP suffix. When the line is truncated from the
+beginning, a \fB[...]\fP indicator is shown.
+.sp
+For example, \fB\-M80p\fP sets max columns to 80 and enables preview mode.
+.sp
 When this flag is omitted or is set to \fB0\fP, then it has no effect.
 "
     }
 
     fn update(&self, v: FlagValue, args: &mut LowArgs) -> anyhow::Result<()> {
-        let max = convert::u64(&v.unwrap_value())?;
+        let (max, enable_preview, enable_center) =
+            convert::max_columns_with_suffix(&v.unwrap_value())?;
         args.max_columns = if max == 0 { None } else { Some(max) };
+        // When max-columns is set to 0, then it has no effect. In particular,
+        // we intentionally ignore any preview/center suffix.
+        if max != 0 {
+            if enable_preview {
+                args.max_columns_preview = true;
+            }
+            if enable_center {
+                args.max_columns_preview_center = true;
+            }
+        }
         Ok(())
     }
 }
@@ -3812,6 +3837,70 @@ fn test_max_columns() {
 
     let args = parse_low_raw(["--max-columns", "5", "-M0"]).unwrap();
     assert_eq!(None, args.max_columns);
+
+    // Test 'p' suffix enables preview
+    let args = parse_low_raw(["-M", "80p"]).unwrap();
+    assert_eq!(Some(80), args.max_columns);
+    assert!(args.max_columns_preview);
+    assert!(!args.max_columns_preview_center);
+
+    let args = parse_low_raw(["-M80p"]).unwrap();
+    assert_eq!(Some(80), args.max_columns);
+    assert!(args.max_columns_preview);
+
+    // Test 'c' suffix enables preview and center
+    let args = parse_low_raw(["-M", "80c"]).unwrap();
+    assert_eq!(Some(80), args.max_columns);
+    assert!(args.max_columns_preview);
+    assert!(args.max_columns_preview_center);
+
+    let args = parse_low_raw(["-M80c"]).unwrap();
+    assert_eq!(Some(80), args.max_columns);
+    assert!(args.max_columns_preview);
+    assert!(args.max_columns_preview_center);
+
+    // Test uppercase is NOT accepted (reserved for future use)
+    assert!(parse_low_raw(["-M80P"]).is_err());
+    assert!(parse_low_raw(["-M80C"]).is_err());
+
+    // Test --no-max-columns-preview overrides suffix
+    let args =
+        parse_low_raw(["-M80p", "--no-max-columns-preview"]).unwrap();
+    assert_eq!(Some(80), args.max_columns);
+    assert!(!args.max_columns_preview);
+
+    // Boundary: suffix with value 0 (disables max-columns)
+    let args = parse_low_raw(["-M0p"]).unwrap();
+    assert_eq!(None, args.max_columns);
+    assert!(!args.max_columns_preview);
+
+    let args = parse_low_raw(["-M0c"]).unwrap();
+    assert_eq!(None, args.max_columns);
+    assert!(!args.max_columns_preview_center);
+
+    // Boundary: value 1
+    let args = parse_low_raw(["-M1c"]).unwrap();
+    assert_eq!(Some(1), args.max_columns);
+
+    // Boundary: large value
+    let args = parse_low_raw(["-M999999999c"]).unwrap();
+    assert_eq!(Some(999999999), args.max_columns);
+
+    // Invalid: suffix only (no number)
+    assert!(parse_low_raw(["-Mp"]).is_err());
+    assert!(parse_low_raw(["-Mc"]).is_err());
+
+    // Invalid: empty value
+    assert!(parse_low_raw(["-M", ""]).is_err());
+
+    // Invalid: non-numeric with suffix
+    assert!(parse_low_raw(["-Mabc"]).is_err());
+    assert!(parse_low_raw(["-Mabcp"]).is_err());
+
+    // Whitespace handling
+    let args = parse_low_raw(["-M", " 80p "]).unwrap();
+    assert_eq!(Some(80), args.max_columns);
+    assert!(args.max_columns_preview);
 }
 
 /// --max-columns-preview
@@ -7605,6 +7694,37 @@ mod convert {
             anyhow::bail!("size is too big")
         };
         Ok(size)
+    }
+
+    /// Parses a max-columns value which may have an optional suffix:
+    /// - No suffix: just the number (e.g., "80")
+    /// - 'p' suffix: number + enable preview (e.g., "80p")
+    /// - 'c' suffix: number + enable preview + center (e.g., "80c")
+    ///
+    /// Returns (number, enable_preview, enable_center)
+    pub(super) fn max_columns_with_suffix(
+        v: &OsStr,
+    ) -> anyhow::Result<(u64, bool, bool)> {
+        let s = str(v)?;
+        let s = s.trim();
+
+        if s.is_empty() {
+            anyhow::bail!("value cannot be empty");
+        }
+
+        // Check for suffix (lowercase only - uppercase reserved for future use)
+        let (num_str, enable_preview, enable_center) = if s.ends_with('c') {
+            (&s[..s.len() - 1], true, true) // 'c' implies 'p'
+        } else if s.ends_with('p') {
+            (&s[..s.len() - 1], true, false)
+        } else {
+            (s, false, false)
+        };
+
+        let num: u64 =
+            num_str.parse().context("value is not a valid number")?;
+
+        Ok((num, enable_preview, enable_center))
     }
 }
 

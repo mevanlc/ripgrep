@@ -66,6 +66,7 @@ pub(crate) struct HiArgs {
     line_number: bool,
     max_columns: Option<u64>,
     max_columns_preview: bool,
+    max_columns_preview_center: bool,
     max_count: Option<u64>,
     max_depth: Option<usize>,
     max_filesize: Option<u64>,
@@ -283,6 +284,7 @@ impl HiArgs {
             line_number,
             max_columns: low.max_columns,
             max_columns_preview: low.max_columns_preview,
+            max_columns_preview_center: low.max_columns_preview_center,
             max_count: low.max_count,
             max_depth: low.max_depth,
             max_filesize: low.max_filesize,
@@ -617,6 +619,7 @@ impl HiArgs {
             .heading(self.heading)
             .hyperlink(self.hyperlink_config.clone())
             .max_columns_preview(self.max_columns_preview)
+            .max_columns_preview_center(self.max_columns_preview_center)
             .max_columns(self.max_columns)
             .only_matching(self.only_matching)
             .path(self.with_filename)

@@ -45,6 +45,7 @@ struct Config {
     replacement: Arc<Option<Vec<u8>>>,
     max_columns: Option<u64>,
     max_columns_preview: bool,
+    max_columns_preview_center: bool,
     column: bool,
     byte_offset: bool,
     trim_ascii: bool,
@@ -70,6 +71,7 @@ impl Default for Config {
             replacement: Arc::new(None),
             max_columns: None,
             max_columns_preview: false,
+            max_columns_preview_center: false,
             column: false,
             byte_offset: false,
             trim_ascii: false,
@@ -320,6 +322,23 @@ impl StandardBuilder {
     /// This is disabled by default.
     pub fn max_columns_preview(&mut self, yes: bool) -> &mut StandardBuilder {
         self.config.max_columns_preview = yes;
+        self
+    }
+
+    /// When enabled with `max_columns_preview`, the preview will be centered
+    /// around the first match instead of showing the beginning of the line.
+    ///
+    /// When text is truncated from the beginning of the line, a `[...]`
+    /// indicator is shown.
+    ///
+    /// If `max_columns_preview` is disabled, this setting has no effect.
+    ///
+    /// This is disabled by default.
+    pub fn max_columns_preview_center(
+        &mut self,
+        yes: bool,
+    ) -> &mut StandardBuilder {
+        self.config.max_columns_preview_center = yes;
         self
     }
 
@@ -591,6 +610,8 @@ impl<W: WriteColor> Standard<W> {
         || self.config.only_matching
         // Computing certain statistics requires finding each match.
         || self.config.stats
+        // Centering preview requires finding the first match position.
+        || self.config.max_columns_preview_center
     }
 }
 
@@ -1294,37 +1315,101 @@ impl<'a, M: Matcher, W: WriteColor> StandardImpl<'a, M, W> {
         matches: &[Match],
         match_index: &mut usize,
     ) -> io::Result<()> {
+        // Preview mode only applies when a non-zero max column limit is set.
         if self.config().max_columns_preview {
-            let original = line;
-            let end = bytes[line]
-                .grapheme_indices()
-                .map(|(_, end, _)| end)
-                .take(self.config().max_columns.unwrap_or(0) as usize)
-                .last()
-                .unwrap_or(0)
-                + line.start();
-            line = line.with_end(end);
-            self.write_colored_matches(bytes, line, matches, match_index)?;
+            if let Some(max_cols_u64) = self.config().max_columns {
+                // A limit of 0 should behave like "no limit" for CLI usage.
+                // Avoid an empty preview window by treating it as disabled.
+                if max_cols_u64 != 0 {
+                    let max_cols =
+                        usize::try_from(max_cols_u64).unwrap_or(usize::MAX);
+                    let original = line;
 
-            if matches.is_empty() {
-                self.write(b" [... omitted end of long line]")?;
-            } else {
-                let remaining = matches
-                    .iter()
-                    .filter(|m| {
-                        m.start() >= line.end() && m.start() < original.end()
-                    })
-                    .count();
-                let tense = if remaining == 1 { "match" } else { "matches" };
-                write!(
-                    self.wtr().borrow_mut(),
-                    " [... {} more {}]",
-                    remaining,
-                    tense,
-                )?;
+                    // Collect grapheme boundaries for the line segment.
+                    let graphemes: Vec<(usize, usize)> = bytes[line]
+                        .grapheme_indices()
+                        .map(|(start, end, _)| {
+                            (start + line.start(), end + line.start())
+                        })
+                        .collect();
+
+                    // Find the first match within this line for centering.
+                    let first_match_in_line = matches.iter().find(|m| {
+                        m.start() >= line.start() && m.start() < line.end()
+                    });
+
+                    let (display_start, display_end, left_truncated) = if self
+                        .config()
+                        .max_columns_preview_center
+                    {
+                        if let Some(first_match) = first_match_in_line {
+                            self.compute_centered_window(
+                                line,
+                                first_match,
+                                &graphemes,
+                                max_cols,
+                            )
+                        } else {
+                            // Fall back to showing the start of the line.
+                            let end_grapheme = max_cols.min(graphemes.len());
+                            let end_byte = if end_grapheme > 0 {
+                                graphemes[end_grapheme - 1].1
+                            } else {
+                                line.start()
+                            };
+                            (line.start(), end_byte, false)
+                        }
+                    } else {
+                        // Standard preview: show from start of line.
+                        let end_grapheme = max_cols.min(graphemes.len());
+                        let end_byte = if end_grapheme > 0 {
+                            graphemes[end_grapheme - 1].1
+                        } else {
+                            line.start()
+                        };
+                        (line.start(), end_byte, false)
+                    };
+
+                    if left_truncated {
+                        self.write(b"[...] ")?;
+                    }
+
+                    line = Match::new(display_start, display_end);
+                    self.write_colored_matches(
+                        bytes,
+                        line,
+                        matches,
+                        match_index,
+                    )?;
+
+                    if display_end < original.end() {
+                        if matches.is_empty() {
+                            self.write(b" [... omitted end of long line]")?;
+                        } else {
+                            let remaining = matches
+                                .iter()
+                                .filter(|m| {
+                                    m.start() >= display_end
+                                        && m.start() < original.end()
+                                })
+                                .count();
+                            let tense = if remaining == 1 {
+                                "match"
+                            } else {
+                                "matches"
+                            };
+                            write!(
+                                self.wtr().borrow_mut(),
+                                " [... {} more {}]",
+                                remaining,
+                                tense,
+                            )?;
+                        }
+                    }
+                    self.write_line_term()?;
+                    return Ok(());
+                }
             }
-            self.write_line_term()?;
-            return Ok(());
         }
         if self.sunk.original_matches().is_empty() {
             if self.is_context() {
@@ -1349,6 +1434,89 @@ impl<'a, M: Matcher, W: WriteColor> StandardImpl<'a, M, W> {
         }
         self.write_line_term()?;
         Ok(())
+    }
+
+    /// Computes the display window for centered preview mode.
+    ///
+    /// Returns (start_byte, end_byte, left_truncated) where left_truncated
+    /// indicates if we truncated from the beginning of the line.
+    fn compute_centered_window(
+        &self,
+        line: Match,
+        first_match: &Match,
+        graphemes: &[(usize, usize)],
+        max_cols: usize,
+    ) -> (usize, usize, bool) {
+        if graphemes.is_empty() {
+            return (line.start(), line.start(), false);
+        }
+
+        // Find grapheme indices that bound the match
+        let match_start_grapheme = graphemes
+            .iter()
+            .position(|(_, end)| *end > first_match.start())
+            .unwrap_or(0);
+        let match_end_grapheme = graphemes
+            .iter()
+            .position(|(start, _)| *start >= first_match.end())
+            .unwrap_or(graphemes.len());
+
+        let match_grapheme_len =
+            match_end_grapheme.saturating_sub(match_start_grapheme);
+
+        if match_grapheme_len >= max_cols {
+            // Match itself is longer than max_cols - show from match start
+            let end_grapheme =
+                (match_start_grapheme + max_cols).min(graphemes.len());
+            let display_start = graphemes[match_start_grapheme].0;
+            let display_end = if end_grapheme > 0 {
+                graphemes[end_grapheme - 1].1
+            } else {
+                display_start
+            };
+            let left_truncated = match_start_grapheme > 0;
+            return (display_start, display_end, left_truncated);
+        }
+
+        // Calculate available context around the match
+        let available_context = max_cols.saturating_sub(match_grapheme_len);
+        // Ceiling division: give extra to before-context
+        let ideal_before = (available_context + 1) / 2;
+        let ideal_after = available_context / 2;
+
+        // Clamp to actual available graphemes
+        let actual_before = match_start_grapheme.min(ideal_before);
+        let space_after = graphemes.len().saturating_sub(match_end_grapheme);
+        let actual_after = space_after.min(ideal_after);
+
+        // Redistribute unused context to the other side
+        let (final_before, final_after) = if actual_before < ideal_before {
+            // Less space before, give more to after
+            let extra = ideal_before - actual_before;
+            let new_after = (actual_after + extra).min(space_after);
+            (actual_before, new_after)
+        } else if actual_after < ideal_after {
+            // Less space after, give more to before
+            let extra = ideal_after - actual_after;
+            let new_before = (actual_before + extra).min(match_start_grapheme);
+            (new_before, actual_after)
+        } else {
+            (actual_before, actual_after)
+        };
+
+        let start_grapheme = match_start_grapheme.saturating_sub(final_before);
+        let end_grapheme =
+            (match_end_grapheme + final_after).min(graphemes.len());
+
+        let display_start = graphemes[start_grapheme].0;
+        let display_end = if end_grapheme > 0 {
+            graphemes[end_grapheme - 1].1
+        } else {
+            display_start
+        };
+        let left_truncated = start_grapheme > 0;
+
+        (display_start, display_end, left_truncated)
     }
 
     /// If this printer has a file path associated with it, then this will
@@ -2513,6 +2681,51 @@ but Doctor Watson has to have it taken out for him and dusted,
 but Doctor Watson has to have it taken out for [... omitted end of long line]
 and exhibited clearly, with a label attached.
 ";
+        assert_eq_printed!(expected, got);
+    }
+
+    #[test]
+    fn max_columns_preview_without_limit_has_no_effect() {
+        let matcher = RegexMatcher::new("dusted").unwrap();
+        let mut printer = StandardBuilder::new()
+            .max_columns_preview(true)
+            .build(NoColor::new(vec![]));
+        SearcherBuilder::new()
+            .line_number(false)
+            .build()
+            .search_reader(
+                &matcher,
+                SHERLOCK.as_bytes(),
+                printer.sink(&matcher),
+            )
+            .unwrap();
+
+        let got = printer_contents(&mut printer);
+        let expected =
+            "but Doctor Watson has to have it taken out for him and dusted,\n";
+        assert_eq_printed!(expected, got);
+    }
+
+    #[test]
+    fn max_columns_preview_center_without_limit_has_no_effect() {
+        let matcher = RegexMatcher::new("dusted").unwrap();
+        let mut printer = StandardBuilder::new()
+            .max_columns_preview(true)
+            .max_columns_preview_center(true)
+            .build(NoColor::new(vec![]));
+        SearcherBuilder::new()
+            .line_number(false)
+            .build()
+            .search_reader(
+                &matcher,
+                SHERLOCK.as_bytes(),
+                printer.sink(&matcher),
+            )
+            .unwrap();
+
+        let got = printer_contents(&mut printer);
+        let expected =
+            "but Doctor Watson has to have it taken out for him and dusted,\n";
         assert_eq_printed!(expected, got);
     }
 
@@ -3983,5 +4196,368 @@ e
         let got = printer_contents(&mut printer);
         let expected = "hello\nworld\r\n";
         assert_eq_printed!(expected, got);
+    }
+
+    // Tests for max_columns_preview_center
+
+    #[test]
+    fn max_columns_preview_center_basic() {
+        // Match in middle of long line - should center around it
+        let haystack = "xxxxxxxxxxxxxxxxxxxxxxxxxxNEEDLEyyyyyyyyyyyyyyyyyyyyyyyyyy\n";
+        let matcher = RegexMatcher::new("NEEDLE").unwrap();
+        let mut printer = StandardBuilder::new()
+            .max_columns(Some(30))
+            .max_columns_preview(true)
+            .max_columns_preview_center(true)
+            .build(NoColor::new(vec![]));
+        SearcherBuilder::new()
+            .line_number(false)
+            .build()
+            .search_reader(
+                &matcher,
+                haystack.as_bytes(),
+                printer.sink(&matcher),
+            )
+            .unwrap();
+
+        let got = printer_contents(&mut printer);
+        // Should show [...] prefix, NEEDLE centered, and truncation suffix
+        assert!(got.starts_with("[...] "), "expected '[...] ' prefix, got: {}", got);
+        assert!(got.contains("NEEDLE"), "expected 'NEEDLE' in output, got: {}", got);
+        assert!(got.contains("[..."), "expected truncation indicator, got: {}", got);
+    }
+
+    #[test]
+    fn max_columns_preview_center_match_at_start() {
+        // Match at start - no left truncation indicator
+        let haystack = "NEEDLEyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy\n";
+        let matcher = RegexMatcher::new("NEEDLE").unwrap();
+        let mut printer = StandardBuilder::new()
+            .max_columns(Some(30))
+            .max_columns_preview(true)
+            .max_columns_preview_center(true)
+            .build(NoColor::new(vec![]));
+        SearcherBuilder::new()
+            .line_number(false)
+            .build()
+            .search_reader(
+                &matcher,
+                haystack.as_bytes(),
+                printer.sink(&matcher),
+            )
+            .unwrap();
+
+        let got = printer_contents(&mut printer);
+        // Should NOT start with [...] since match is at beginning
+        assert!(!got.starts_with("[...]"), "should not have '[...]' prefix when match at start, got: {}", got);
+        assert!(got.starts_with("NEEDLE"), "should start with 'NEEDLE', got: {}", got);
+    }
+
+    #[test]
+    fn max_columns_preview_center_match_at_end() {
+        // Match at end - should have left truncation but no right truncation
+        let haystack = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxNEEDLE\n";
+        let matcher = RegexMatcher::new("NEEDLE").unwrap();
+        let mut printer = StandardBuilder::new()
+            .max_columns(Some(30))
+            .max_columns_preview(true)
+            .max_columns_preview_center(true)
+            .build(NoColor::new(vec![]));
+        SearcherBuilder::new()
+            .line_number(false)
+            .build()
+            .search_reader(
+                &matcher,
+                haystack.as_bytes(),
+                printer.sink(&matcher),
+            )
+            .unwrap();
+
+        let got = printer_contents(&mut printer);
+        // Should have [...] prefix
+        assert!(got.starts_with("[...] "), "expected '[...] ' prefix, got: {}", got);
+        // Should end with NEEDLE and newline (no right truncation)
+        assert!(got.trim_end().ends_with("NEEDLE"), "should end with 'NEEDLE', got: {}", got);
+        // Should NOT have "more matches" or "omitted end" since we reached end of line
+        assert!(!got.contains("more match"), "should not have 'more matches' when at line end, got: {}", got);
+        assert!(!got.contains("omitted end"), "should not have 'omitted end' when at line end, got: {}", got);
+    }
+
+    #[test]
+    fn max_columns_preview_center_short_line() {
+        // Line shorter than max_columns - no truncation at all
+        let haystack = "Hello NEEDLE World\n";
+        let matcher = RegexMatcher::new("NEEDLE").unwrap();
+        let mut printer = StandardBuilder::new()
+            .max_columns(Some(50))
+            .max_columns_preview(true)
+            .max_columns_preview_center(true)
+            .build(NoColor::new(vec![]));
+        SearcherBuilder::new()
+            .line_number(false)
+            .build()
+            .search_reader(
+                &matcher,
+                haystack.as_bytes(),
+                printer.sink(&matcher),
+            )
+            .unwrap();
+
+        let got = printer_contents(&mut printer);
+        let expected = "Hello NEEDLE World\n";
+        assert_eq_printed!(expected, got);
+    }
+
+    #[test]
+    fn max_columns_preview_center_exact_fit() {
+        // Line exactly at max_columns - no truncation
+        // Note: max_columns counts bytes, newline excluded from line content check
+        let haystack = "0123456789NEEDLE56789\n"; // 21 chars + newline
+        let matcher = RegexMatcher::new("NEEDLE").unwrap();
+        let mut printer = StandardBuilder::new()
+            .max_columns(Some(22)) // 21 chars + newline = 22 bytes
+            .max_columns_preview(true)
+            .max_columns_preview_center(true)
+            .build(NoColor::new(vec![]));
+        SearcherBuilder::new()
+            .line_number(false)
+            .build()
+            .search_reader(
+                &matcher,
+                haystack.as_bytes(),
+                printer.sink(&matcher),
+            )
+            .unwrap();
+
+        let got = printer_contents(&mut printer);
+        let expected = "0123456789NEEDLE56789\n";
+        assert_eq_printed!(expected, got);
+    }
+
+    #[test]
+    fn max_columns_preview_center_one_over() {
+        // Line one char over max_columns - minimal truncation
+        let haystack = "0123456789NEEDLE567890\n"; // 22 chars
+        let matcher = RegexMatcher::new("NEEDLE").unwrap();
+        let mut printer = StandardBuilder::new()
+            .max_columns(Some(21))
+            .max_columns_preview(true)
+            .max_columns_preview_center(true)
+            .build(NoColor::new(vec![]));
+        SearcherBuilder::new()
+            .line_number(false)
+            .build()
+            .search_reader(
+                &matcher,
+                haystack.as_bytes(),
+                printer.sink(&matcher),
+            )
+            .unwrap();
+
+        let got = printer_contents(&mut printer);
+        // Should have one char truncated from right (since match is centered)
+        assert!(got.contains("NEEDLE"), "expected 'NEEDLE' in output, got: {}", got);
+        // The "0" at the end should be truncated
+        assert!(got.contains("[..."), "expected truncation indicator, got: {}", got);
+    }
+
+    #[test]
+    fn max_columns_preview_center_match_longer_than_limit() {
+        // Match itself is longer than max_columns
+        let haystack = "xxNEEDLENEEDLENEEDLENEEDLENEEDLENEEDLENEEDLEyy\n";
+        let matcher = RegexMatcher::new("NEEDLE(NEEDLE)+").unwrap();
+        let mut printer = StandardBuilder::new()
+            .max_columns(Some(20))
+            .max_columns_preview(true)
+            .max_columns_preview_center(true)
+            .build(NoColor::new(vec![]));
+        SearcherBuilder::new()
+            .line_number(false)
+            .build()
+            .search_reader(
+                &matcher,
+                haystack.as_bytes(),
+                printer.sink(&matcher),
+            )
+            .unwrap();
+
+        let got = printer_contents(&mut printer);
+        // Should show from start of match, truncated
+        assert!(got.contains("[...] "), "expected '[...] ' prefix when match starts after beginning, got: {}", got);
+        assert!(got.contains("NEEDLE"), "expected 'NEEDLE' in output, got: {}", got);
+    }
+
+    #[test]
+    fn max_columns_preview_center_unicode_graphemes() {
+        // Test with multi-byte Unicode characters (graphemes)
+        // Using emoji which are multi-byte
+        let haystack = "🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉NEEDLE🎊🎊🎊🎊🎊🎊🎊🎊🎊🎊\n";
+        let matcher = RegexMatcher::new("NEEDLE").unwrap();
+        let mut printer = StandardBuilder::new()
+            .max_columns(Some(15)) // 15 graphemes
+            .max_columns_preview(true)
+            .max_columns_preview_center(true)
+            .build(NoColor::new(vec![]));
+        SearcherBuilder::new()
+            .line_number(false)
+            .build()
+            .search_reader(
+                &matcher,
+                haystack.as_bytes(),
+                printer.sink(&matcher),
+            )
+            .unwrap();
+
+        let got = printer_contents(&mut printer);
+        assert!(got.contains("NEEDLE"), "expected 'NEEDLE' in output, got: {}", got);
+        assert!(got.contains("[...] "), "expected '[...] ' prefix, got: {}", got);
+    }
+
+    #[test]
+    fn max_columns_preview_center_min_columns() {
+        // Edge case: max_columns = 1 (minimum useful value)
+        let haystack = "xxNEEDLEyy\n";
+        let matcher = RegexMatcher::new("NEEDLE").unwrap();
+        let mut printer = StandardBuilder::new()
+            .max_columns(Some(1))
+            .max_columns_preview(true)
+            .max_columns_preview_center(true)
+            .build(NoColor::new(vec![]));
+        SearcherBuilder::new()
+            .line_number(false)
+            .build()
+            .search_reader(
+                &matcher,
+                haystack.as_bytes(),
+                printer.sink(&matcher),
+            )
+            .unwrap();
+
+        let got = printer_contents(&mut printer);
+        // Should still produce some output with truncation
+        assert!(got.contains("[..."), "expected truncation indicator, got: {}", got);
+    }
+
+    #[test]
+    fn max_columns_preview_center_multiple_matches() {
+        // Multiple matches - should center on first, report remaining
+        // Make line long enough that second NEEDLE is definitely beyond display window
+        let haystack = "xxxxxxxxxxNEEDLEyyyyyyyyyyyyyyyyyyyyyyyyNEEDLEzzzzzzzzzz\n";
+        //              ^10 chars  ^6     ^24 chars                 ^6     ^10
+        // First NEEDLE at pos 10-15, second at pos 40-45
+        let matcher = RegexMatcher::new("NEEDLE").unwrap();
+        let mut printer = StandardBuilder::new()
+            .max_columns(Some(25))
+            .max_columns_preview(true)
+            .max_columns_preview_center(true)
+            .build(NoColor::new(vec![]));
+        SearcherBuilder::new()
+            .line_number(false)
+            .build()
+            .search_reader(
+                &matcher,
+                haystack.as_bytes(),
+                printer.sink(&matcher),
+            )
+            .unwrap();
+
+        let got = printer_contents(&mut printer);
+        // Should show first NEEDLE centered
+        assert!(got.contains("NEEDLE"), "expected 'NEEDLE' in output, got: {}", got);
+        // Should report second match in truncation message
+        assert!(got.contains("1 more match"), "expected '1 more match' for second NEEDLE, got: {}", got);
+    }
+
+    #[test]
+    fn max_columns_preview_center_context_redistribution() {
+        // Match near start - extra context should go to right side
+        let haystack = "xxNEEDLEyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy\n";
+        let matcher = RegexMatcher::new("NEEDLE").unwrap();
+        let mut printer = StandardBuilder::new()
+            .max_columns(Some(20))
+            .max_columns_preview(true)
+            .max_columns_preview_center(true)
+            .build(NoColor::new(vec![]));
+        SearcherBuilder::new()
+            .line_number(false)
+            .build()
+            .search_reader(
+                &matcher,
+                haystack.as_bytes(),
+                printer.sink(&matcher),
+            )
+            .unwrap();
+
+        let got = printer_contents(&mut printer);
+        // Match is near start, so most context should be on right
+        // Should start with "xx" (the available left context)
+        assert!(got.starts_with("xx") || got.starts_with("[...] xx"),
+            "expected output to preserve left context 'xx', got: {}", got);
+        assert!(got.contains("NEEDLE"), "expected 'NEEDLE' in output, got: {}", got);
+    }
+
+    #[test]
+    fn max_columns_preview_center_grapheme_before_truncation() {
+        // Test that left-truncation doesn't chop a multi-byte grapheme in half.
+        // Use 4-byte emoji (🎉 = F0 9F 8E 89) so byte-based slicing would corrupt.
+        // 10 emoji = 40 bytes but 10 graphemes
+        let haystack = "🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉NEEDLEyyyyy\n";
+        let matcher = RegexMatcher::new("NEEDLE").unwrap();
+        let mut printer = StandardBuilder::new()
+            // 12 graphemes: should show ~3 emoji + NEEDLE(6) + 3 y's
+            // Left truncation must happen at grapheme boundary
+            .max_columns(Some(12))
+            .max_columns_preview(true)
+            .max_columns_preview_center(true)
+            .build(NoColor::new(vec![]));
+        SearcherBuilder::new()
+            .line_number(false)
+            .build()
+            .search_reader(
+                &matcher,
+                haystack.as_bytes(),
+                printer.sink(&matcher),
+            )
+            .unwrap();
+
+        let got = printer_contents(&mut printer);
+        // Output must be valid UTF-8 (would panic on from_utf8 if corrupted)
+        // Should contain intact emoji, not garbage bytes
+        assert!(got.contains("NEEDLE"), "expected 'NEEDLE' in output, got: {}", got);
+        assert!(got.contains("🎉"), "expected intact emoji in output, got: {}", got);
+        // Should have left truncation indicator
+        assert!(got.contains("[...]"), "expected '[...]' prefix, got: {}", got);
+    }
+
+    #[test]
+    fn max_columns_preview_center_grapheme_after_truncation() {
+        // Test that right-truncation doesn't chop a multi-byte grapheme in half.
+        // Use 4-byte emoji (🎊 = F0 9F 8E 8A) so byte-based slicing would corrupt.
+        let haystack = "xxxxxNEEDLE🎊🎊🎊🎊🎊🎊🎊🎊🎊🎊\n";
+        let matcher = RegexMatcher::new("NEEDLE").unwrap();
+        let mut printer = StandardBuilder::new()
+            // 12 graphemes: should show ~3 x's + NEEDLE(6) + 3 emoji
+            // Right truncation must happen at grapheme boundary
+            .max_columns(Some(12))
+            .max_columns_preview(true)
+            .max_columns_preview_center(true)
+            .build(NoColor::new(vec![]));
+        SearcherBuilder::new()
+            .line_number(false)
+            .build()
+            .search_reader(
+                &matcher,
+                haystack.as_bytes(),
+                printer.sink(&matcher),
+            )
+            .unwrap();
+
+        let got = printer_contents(&mut printer);
+        // Output must be valid UTF-8 (would panic on from_utf8 if corrupted)
+        // Should contain intact emoji, not garbage bytes
+        assert!(got.contains("NEEDLE"), "expected 'NEEDLE' in output, got: {}", got);
+        assert!(got.contains("🎊"), "expected intact emoji in output, got: {}", got);
+        // Should have right truncation indicator
+        assert!(got.contains("[..."), "expected truncation indicator, got: {}", got);
     }
 }
