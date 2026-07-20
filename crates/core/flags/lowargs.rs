@@ -65,6 +65,9 @@ pub(crate) struct LowArgs {
     pub(crate) ignore_file: Vec<PathBuf>,
     pub(crate) ignore_file_case_insensitive: bool,
     pub(crate) include_zero: bool,
+    pub(crate) index: usize,
+    pub(crate) index_force: bool,
+    pub(crate) index_path: Option<PathBuf>,
     pub(crate) invert_match: bool,
     pub(crate) line_number: Option<bool>,
     pub(crate) logging: Option<LoggingMode>,
@@ -110,7 +113,7 @@ pub(crate) struct LowArgs {
     pub(crate) with_filename: Option<bool>,
 }
 
-/// A "special" mode that supercedes everything else.
+/// A "special" mode that supersedes everything else.
 ///
 /// When one of these modes is present, it overrides everything else and causes
 /// ripgrep to short-circuit. In particular, we avoid converting low-level
@@ -154,6 +157,8 @@ pub(crate) enum SpecialMode {
 pub(crate) enum Mode {
     /// ripgrep will execute a search of some kind.
     Search(SearchMode),
+    /// Create or update a search index.
+    Index(IndexMode),
     /// Show the files that *would* be searched, but don't actually search
     /// them.
     Files,
@@ -188,6 +193,13 @@ impl Mode {
             }
         }
     }
+}
+
+/// The kind of index operation that ripgrep should perform.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum IndexMode {
+    /// Add, update or remove files in an index.
+    Crud,
 }
 
 /// The kind of search that ripgrep is going to perform.
@@ -256,9 +268,9 @@ pub(crate) enum BinaryMode {
 /// Indicates what kind of boundary mode to use (line or word).
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) enum BoundaryMode {
-    /// Only allow matches when surrounded by line bounaries.
+    /// Only allow matches when surrounded by line boundaries.
     Line,
-    /// Only allow matches when surrounded by word bounaries.
+    /// Only allow matches when surrounded by word boundaries.
     Word,
 }
 
@@ -491,7 +503,7 @@ impl ContextSeparator {
         Ok(ContextSeparator(Some(Vec::unescape_bytes(string).into())))
     }
 
-    /// Creates a new separator that intructs the printer to disable contextual
+    /// Creates a new separator that instructs the printer to disable contextual
     /// separators entirely.
     pub(crate) fn disabled() -> ContextSeparator {
         ContextSeparator(None)

@@ -47,6 +47,9 @@ mod hiargs;
 mod lowargs;
 mod parse;
 
+const INDEXING_NOT_SUPPORTED: &'static str =
+    "Indexing is not supported in this build of ripgrep.";
+
 /// A trait that encapsulates the definition of an optional flag for ripgrep.
 ///
 /// This trait is meant to be used via dynamic dispatch. Namely, the `defs`
@@ -67,7 +70,7 @@ mod parse;
 /// by a single implementation of this trait.
 ///
 /// ripgrep only supports flags that are switches or flags that accept a single
-/// value. Flags that accept multiple values are an unsupported abberation.
+/// value. Flags that accept multiple values are an unsupported aberration.
 trait Flag: Debug + Send + Sync + UnwindSafe + RefUnwindSafe + 'static {
     /// Returns true if this flag is a switch. When a flag is a switch, the
     /// CLI parser will not look for a value after the flag is seen.
@@ -205,6 +208,9 @@ enum Category {
     /// lines, and instead just print the total count of matches for each file
     /// searched.
     OutputModes,
+    /// Flags related to indexing. This section includes flags both for
+    /// searching an index and updating an index.
+    Indexing,
     /// Flags related to logging behavior such as emitting non-fatal error
     /// messages or printing search statistics.
     Logging,
@@ -226,6 +232,7 @@ impl Category {
             Category::Filter => "filter",
             Category::Output => "output",
             Category::OutputModes => "output-modes",
+            Category::Indexing => "indexing",
             Category::Logging => "logging",
             Category::OtherBehaviors => "other-behaviors",
         }

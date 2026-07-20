@@ -86,6 +86,7 @@ fn run(result: crate::flags::ParseResult<HiArgs>) -> anyhow::Result<ExitCode> {
         Mode::Search(_) if !args.matches_possible() => false,
         Mode::Search(mode) if args.threads() == 1 => search(&args, mode)?,
         Mode::Search(mode) => search_parallel(&args, mode)?,
+        Mode::Index(_) => anyhow::bail!("indexing not yet implemented"),
         Mode::Files if args.threads() == 1 => files(&args)?,
         Mode::Files => files_parallel(&args)?,
         Mode::Types => return types(&args),
@@ -427,7 +428,7 @@ fn eprint_nothing_searched() {
 /// The `started` time should be the time at which ripgrep started working.
 ///
 /// If an error occurs while writing, then writing stops and the error is
-/// returned. Note that callers should probably ignore this errror, since
+/// returned. Note that callers should probably ignore this error, since
 /// whether stats fail to print or not generally shouldn't cause ripgrep to
 /// enter into an "error" state. And usually the only way for this to fail is
 /// if writing to stdout itself fails.

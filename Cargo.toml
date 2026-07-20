@@ -1,6 +1,6 @@
 [package]
 name = "ripgrep"
-version = "15.1.0"  #:version
+version = "15.2.0"  #:version
 authors = ["Andrew Gallant <jamslam@gmail.com>"]
 description = """
 ripgrep is a line-oriented search tool that recursively searches the current
@@ -24,8 +24,8 @@ exclude = [
 ]
 build = "build.rs"
 autotests = false
-edition = "2024"
-rust-version = "1.85"
+edition.workspace = true
+rust-version.workspace = true
 
 [[bin]]
 bench = false
@@ -41,6 +41,7 @@ members = [
   "crates/globset",
   "crates/grep",
   "crates/cli",
+  "crates/index",
   "crates/matcher",
   "crates/pcre2",
   "crates/printer",
@@ -49,19 +50,23 @@ members = [
   "crates/ignore",
 ]
 
+[workspace.package]
+edition = "2024"
+rust-version = "1.96"
+
 [dependencies]
 anyhow = "1.0.75"
 bstr = "1.7.0"
 grep = { version = "0.4.1", path = "crates/grep" }
-ignore = { version = "0.4.24", path = "crates/ignore" }
+ignore = { version = "0.4.29", path = "crates/ignore" }
 lexopt = "0.3.0"
 log = "0.4.5"
 serde_json = "1.0.23"
-termcolor = "1.1.0"
+termcolor = "1.4.0"
 textwrap = { version = "0.16.0", default-features = false }
 
 [target.'cfg(all(target_env = "musl", target_pointer_width = "64"))'.dependencies.tikv-jemallocator]
-version = "0.6.0"
+version = "0.7.0"
 
 [dev-dependencies]
 serde = "1.0.77"
@@ -70,6 +75,9 @@ walkdir = "2"
 
 [features]
 pcre2 = ["grep/pcre2"]
+# This provides opt-in support for indexing. This is currently in active
+# development and may have very serious bugs. Use at your own risk.
+unstable-index = []
 
 [profile.release]
 debug = 1

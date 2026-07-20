@@ -224,6 +224,7 @@ pub(crate) const DEFAULT_TYPES: &[(&[&str], &[&str])] = &[
     (&["mint"], &["*.mint"]),
     (&["mk"], &["mkfile"]),
     (&["ml"], &["*.ml"]),
+    (&["mojo"], &["*.mojo"]),
     (&["motoko"], &["*.mo"]),
     (&["msbuild"], &[
         "*.csproj", "*.fsproj", "*.vcxproj", "*.proj", "*.props", "*.targets",
@@ -245,11 +246,12 @@ pub(crate) const DEFAULT_TYPES: &[(&[&str], &[&str])] = &[
         "*.php", "*.php3", "*.php4", "*.php5", "*.php7", "*.php8",
         "*.pht", "*.phtml"
     ]),
+    (&["pkgbuild"], &["PKGBUILD"]),
     (&["po"], &["*.po"]),
     (&["pod"], &["*.pod"]),
     (&["postscript"], &["*.eps", "*.ps"]),
     (&["prolog"], &["*.pl", "*.pro", "*.prolog", "*.P"]),
-    (&["protobuf"], &["*.proto"]),
+    (&["proto", "protobuf"], &["*.proto"]),
     (&["ps"], &["*.cdxml", "*.ps1", "*.ps1xml", "*.psd1", "*.psm1"]),
     (&["puppet"], &["*.epp", "*.erb", "*.pp", "*.rb"]),
     (&["purs"], &["*.purs"]),
@@ -271,6 +273,7 @@ pub(crate) const DEFAULT_TYPES: &[(&[&str], &[&str])] = &[
     (&["red"], &["*.r", "*.red", "*.reds"]),
     (&["rescript"], &["*.res", "*.resi"]),
     (&["robot"], &["*.robot"]),
+    (&["rocq"], &["*.v"]),
     (&["rst"], &["*.rst"]),
     (&["ruby"], &[
         // Idiomatic files
@@ -492,5 +495,15 @@ mod tests {
         let all = union(&["just-compressed", "just-archive"]);
         assert_eq!(globs("archive"), all);
         assert_eq!(globs("compressed"), all);
+    }
+
+    #[test]
+    fn default_types_aliases_are_sorted() {
+        for (aliases, _) in DEFAULT_TYPES.iter() {
+            assert!(
+                aliases.is_sorted(),
+                "this alias list is not sorted: {aliases:?}",
+            );
+        }
     }
 }
