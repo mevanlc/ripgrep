@@ -3864,8 +3864,7 @@ fn test_max_columns() {
     assert!(parse_low_raw(["-M80C"]).is_err());
 
     // Test --no-max-columns-preview overrides suffix
-    let args =
-        parse_low_raw(["-M80p", "--no-max-columns-preview"]).unwrap();
+    let args = parse_low_raw(["-M80p", "--no-max-columns-preview"]).unwrap();
     assert_eq!(Some(80), args.max_columns);
     assert!(!args.max_columns_preview);
 
@@ -7075,8 +7074,8 @@ again:
     \-\-type\-add 'src:include:cpp,py,md' \-\-type\-add 'src:*.foo'
 .EE
 .sp
-Note that type names must consist only of Unicode letters or numbers.
-Punctuation characters are not allowed.
+Note that type names must begin and end with a Unicode letter or number. Between
+them, hyphens are also permitted. Other punctuation characters are not allowed.
 "
     }
 

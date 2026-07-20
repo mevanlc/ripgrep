@@ -1,3 +1,35 @@
+#[rustfmt::skip]
+const TAR_COMPRESSED_GLOBS: &[&str] = &[
+    "*.tar.gz", "*.tgz", "*.tar.bz2", "*.tbz2", "*.tbz", "*.tb2",
+    "*.tar.xz", "*.txz", "*.tpxz", "*.tar.pxz", "*.tar.zst", "*.tzst",
+    "*.tar.Z", "*.taz", "*.tar.lz", "*.tlz", "*.tar.lzma", "*.tar.lzm",
+    "*.tar.lz4", "*.tar.br",
+];
+
+#[rustfmt::skip]
+const JUST_ARCHIVE_GLOBS: &[&str] = &[
+    "*.tar.gz", "*.tgz", "*.tar.bz2", "*.tbz2", "*.tbz", "*.tb2",
+    "*.tar.xz", "*.txz", "*.tpxz", "*.tar.pxz", "*.tar.zst", "*.tzst",
+    "*.tar.Z", "*.taz", "*.tar.lz", "*.tlz", "*.tar.lzma", "*.tar.lzm",
+    "*.tar.lz4", "*.tar.br", "*.tar", "*.zip", "*.7z", "*.rar",
+];
+
+#[rustfmt::skip]
+const JUST_COMPRESSED_GLOBS: &[&str] = &[
+    "*.br", "*.bz2", "*.gz", "*.lz4", "*.lzma", "*.xz", "*.Z", "*.zst",
+    "*.zstd",
+];
+
+#[rustfmt::skip]
+const ARCHIVE_GLOBS: &[&str] = &[
+    "*.br", "*.bz2", "*.gz", "*.lz4", "*.lzma", "*.xz", "*.Z", "*.zst",
+    "*.zstd", "*.tar.gz", "*.tgz", "*.tar.bz2", "*.tbz2", "*.tbz",
+    "*.tb2", "*.tar.xz", "*.txz", "*.tpxz", "*.tar.pxz", "*.tar.zst",
+    "*.tzst", "*.tar.Z", "*.taz", "*.tar.lz", "*.tlz", "*.tar.lzma",
+    "*.tar.lzm", "*.tar.lz4", "*.tar.br", "*.tar", "*.zip", "*.7z",
+    "*.rar",
+];
+
 /// This list represents the default file types that ripgrep ships with. In
 /// general, any file format is fair game, although it should generally be
 /// limited to reasonably popular open formats. For other cases, you can add
@@ -10,11 +42,13 @@
 /// columns (inclusive).
 #[rustfmt::skip]
 pub(crate) const DEFAULT_TYPES: &[(&[&str], &[&str])] = &[
+    (&["7z"], &["*.7z"]),
     (&["ada"], &["*.adb", "*.ads"]),
     (&["agda"], &["*.agda", "*.lagda"]),
     (&["aidl"], &["*.aidl"]),
     (&["alire"], &["alire.toml"]),
     (&["amake"], &["*.mk", "*.bp"]),
+    (&["archive"], ARCHIVE_GLOBS),
     (&["asciidoc"], &["*.adoc", "*.asc", "*.asciidoc"]),
     (&["asm"], &["*.asm", "*.s", "*.S"]),
     (&["asp"], &[
@@ -33,7 +67,7 @@ pub(crate) const DEFAULT_TYPES: &[(&[&str], &[&str])] = &[
     (&["boxlang"], &["*.bx", "*.bxm", "*.bxs"]),
     (&["brotli"], &["*.br"]),
     (&["buildstream"], &["*.bst"]),
-    (&["bzip2"], &["*.bz2", "*.tbz2"]),
+    (&["bzip2"], &["*.bz2"]),
     (&["c"], &["*.[chH]", "*.[chH].in", "*.cats"]),
     (&["cabal"], &["*.cabal"]),
     (&["candid"], &["*.did"]),
@@ -46,6 +80,7 @@ pub(crate) const DEFAULT_TYPES: &[(&[&str], &[&str])] = &[
     (&["cmd"], &["*.bat", "*.cmd"]),
     (&["cml"], &["*.cml"]),
     (&["coffeescript"], &["*.coffee"]),
+    (&["compressed"], ARCHIVE_GLOBS),
     (&["config"], &["*.cfg", "*.conf", "*.config", "*.ini"]),
     (&["container"], &["*Containerfile*", "*Dockerfile*"]),
     (&["coq"], &["*.v"]),
@@ -102,7 +137,7 @@ pub(crate) const DEFAULT_TYPES: &[(&[&str], &[&str])] = &[
     ]),
     (&["graphql"], &["*.graphql", "*.graphqls"]),
     (&["groovy"], &["*.groovy", "*.gradle"]),
-    (&["gzip"], &["*.gz", "*.tgz"]),
+    (&["gzip"], &["*.gz"]),
     (&["h"], &["*.h", "*.hh", "*.hpp"]),
     (&["haml"], &["*.haml"]),
     (&["hare"], &["*.ha"]),
@@ -122,6 +157,8 @@ pub(crate) const DEFAULT_TYPES: &[(&[&str], &[&str])] = &[
     (&["jsonl"], &["*.jsonl"]),
     (&["julia"], &["*.jl"]),
     (&["jupyter"], &["*.ipynb", "*.jpynb"]),
+    (&["just-archive"], JUST_ARCHIVE_GLOBS),
+    (&["just-compressed"], JUST_COMPRESSED_GLOBS),
     (&["k"], &["*.k"]),
     (&["kconfig"], &["Kconfig", "Kconfig.*"]),
     (&["kotlin"], &["*.kt", "*.kts"]),
@@ -227,6 +264,7 @@ pub(crate) const DEFAULT_TYPES: &[(&[&str], &[&str])] = &[
         "*.raku", "*.rakumod", "*.rakudoc", "*.rakutest",
         "*.p6", "*.pl6", "*.pm6"
     ]),
+    (&["rar"], &["*.rar"]),
     (&["rdoc"], &["*.rdoc"]),
     (&["readme"], &["README*", "*README"]),
     (&["reasonml"], &["*.re", "*.rei"]),
@@ -288,6 +326,18 @@ pub(crate) const DEFAULT_TYPES: &[(&[&str], &[&str])] = &[
         "*.scope", "*.service", "*.slice", "*.socket", "*.swap", "*.target",
         "*.timer",
     ]),
+    (&["tar"], &["*.tar"]),
+    (&["tar-brotli"], &["*.tar.br"]),
+    (&["tar-bzip2"], &["*.tar.bz2", "*.tbz2", "*.tbz", "*.tb2"]),
+    (&["tar-compressed"], TAR_COMPRESSED_GLOBS),
+    (&["tar-gzip"], &["*.tar.gz", "*.tgz"]),
+    (&["tar-lz4"], &["*.tar.lz4"]),
+    (&["tar-lzip"], &["*.tar.lz", "*.tlz"]),
+    (&["tar-lzma"], &["*.tar.lzma", "*.tar.lzm"]),
+    (&["tar-pixz"], &["*.tar.pxz", "*.tpxz"]),
+    (&["tar-xz"], &["*.tar.xz", "*.txz", "*.tpxz", "*.tar.pxz"]),
+    (&["tar-z"], &["*.tar.Z", "*.taz"]),
+    (&["tar-zstd"], &["*.tar.zst", "*.tzst"]),
     (&["taskpaper"], &["*.taskpaper"]),
     (&["tcl"], &["*.tcl"]),
     (&["tex"], &["*.tex", "*.ltx", "*.cls", "*.sty", "*.bib", "*.dtx", "*.ins"]),
@@ -325,12 +375,13 @@ pub(crate) const DEFAULT_TYPES: &[(&[&str], &[&str])] = &[
         "*.xml", "*.xml.dist", "*.dtd", "*.xsl", "*.xslt", "*.xsd", "*.xjb",
         "*.rng", "*.sch", "*.xhtml",
     ]),
-    (&["xz"], &["*.xz", "*.txz"]),
+    (&["xz"], &["*.xz"]),
     (&["yacc"], &["*.y"]),
     (&["yaml"], &["*.yaml", "*.yml"]),
     (&["yang"], &["*.yang"]),
     (&["z"], &["*.Z"]),
     (&["zig"], &["*.zig"]),
+    (&["zip"], &["*.zip"]),
     (&["zsh"], &[
         ".zshenv", "zshenv",
         ".zlogin", "zlogin",
@@ -344,7 +395,21 @@ pub(crate) const DEFAULT_TYPES: &[(&[&str], &[&str])] = &[
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use super::DEFAULT_TYPES;
+
+    fn globs(name: &str) -> BTreeSet<&'static str> {
+        DEFAULT_TYPES
+            .iter()
+            .find(|(names, _)| names.contains(&name))
+            .map(|(_, globs)| globs.iter().copied().collect())
+            .unwrap_or_else(|| panic!("missing default type {name:?}"))
+    }
+
+    fn union(names: &[&str]) -> BTreeSet<&'static str> {
+        names.iter().flat_map(|name| globs(name)).collect()
+    }
 
     #[test]
     fn default_types_are_sorted() {
@@ -361,5 +426,71 @@ mod tests {
             );
             previous_name = name;
         }
+    }
+
+    #[test]
+    fn archive_and_compression_types() {
+        macro_rules! assert_globs {
+            ($name:literal, $($glob:literal),+ $(,)?) => {
+                assert_eq!(
+                    globs($name),
+                    [$($glob),+].into_iter().collect(),
+                    "default type {:?}",
+                    $name,
+                );
+            };
+        }
+
+        assert_globs!("7z", "*.7z");
+        assert_globs!("brotli", "*.br");
+        assert_globs!("bzip2", "*.bz2");
+        assert_globs!("gzip", "*.gz");
+        assert_globs!("lz4", "*.lz4");
+        assert_globs!("lzma", "*.lzma");
+        assert_globs!("rar", "*.rar");
+        assert_globs!("tar", "*.tar");
+        assert_globs!("tar-brotli", "*.tar.br");
+        assert_globs!("tar-bzip2", "*.tar.bz2", "*.tbz2", "*.tbz", "*.tb2");
+        assert_globs!("tar-gzip", "*.tar.gz", "*.tgz");
+        assert_globs!("tar-lz4", "*.tar.lz4");
+        assert_globs!("tar-lzip", "*.tar.lz", "*.tlz");
+        assert_globs!("tar-lzma", "*.tar.lzma", "*.tar.lzm");
+        assert_globs!("tar-pixz", "*.tar.pxz", "*.tpxz");
+        assert_globs!("tar-xz", "*.tar.xz", "*.txz", "*.tpxz", "*.tar.pxz",);
+        assert_globs!("tar-z", "*.tar.Z", "*.taz");
+        assert_globs!("tar-zstd", "*.tar.zst", "*.tzst");
+        assert_globs!("xz", "*.xz");
+        assert_globs!("z", "*.Z");
+        assert_globs!("zip", "*.zip");
+        assert_globs!("zstd", "*.zst", "*.zstd");
+
+        assert_eq!(
+            globs("tar-compressed"),
+            union(&[
+                "tar-brotli",
+                "tar-bzip2",
+                "tar-gzip",
+                "tar-lz4",
+                "tar-lzip",
+                "tar-lzma",
+                "tar-pixz",
+                "tar-xz",
+                "tar-z",
+                "tar-zstd",
+            ]),
+        );
+        assert_eq!(
+            globs("just-archive"),
+            union(&["tar-compressed", "tar", "zip", "7z", "rar"]),
+        );
+        assert_eq!(
+            globs("just-compressed"),
+            union(&[
+                "brotli", "bzip2", "gzip", "lz4", "lzma", "xz", "z", "zstd",
+            ]),
+        );
+        let all = union(&["just-compressed", "just-archive"]);
+        assert_eq!(globs("archive"), all);
+        assert_eq!(globs("compressed"), all);
     }
 }

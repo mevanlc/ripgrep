@@ -412,10 +412,16 @@ impl TypesBuilder {
     /// Add a new file type definition. `name` can be arbitrary and `pat`
     /// should be a glob recognizing file paths belonging to the `name` type.
     ///
-    /// If `name` is `all` or otherwise contains any character that is not a
-    /// Unicode letter or number, then an error is returned.
+    /// If `name` is `all`, begins or ends with a hyphen, or contains any
+    /// character other than a Unicode letter, number or hyphen, then an error
+    /// is returned.
     pub fn add(&mut self, name: &str, glob: &str) -> Result<(), Error> {
-        if name == "all" || !name.chars().all(|c| c.is_alphanumeric()) {
+        if name.is_empty()
+            || name == "all"
+            || name.starts_with('-')
+            || name.ends_with('-')
+            || !name.chars().all(|c| c.is_alphanumeric() || c == '-')
+        {
             return Err(Error::InvalidDefinition);
         }
         let (key, glob) = (name.to_string(), glob.to_string());
@@ -437,8 +443,8 @@ impl TypesBuilder {
     /// 2. `{name}:include:{comma-separated list of already defined names}.
     ///     This defines an 'include' definition that associates the given name
     ///     with the definitions of the given existing types.
-    /// Names may not include any characters that are not
-    /// Unicode letters or numbers.
+    /// Names must begin and end with a Unicode letter or number, and otherwise
+    /// contain only Unicode letters, numbers or hyphens.
     pub fn add_def(&mut self, def: &str) -> Result<(), Error> {
         let parts: Vec<&str> = def.split(':').collect();
         match parts.len() {
@@ -578,6 +584,19 @@ mod tests {
         for def in bad_defs {
             assert!(btypes.add_def(def).is_err());
             // Ensure that nothing changed, even if some of the includes were valid.
+            assert_eq!(btypes.definitions(), original_defs);
+        }
+    }
+
+    #[test]
+    fn type_names_may_contain_internal_hyphens() {
+        let mut btypes = TypesBuilder::new();
+        for name in ["foo", "foo-bar", "foo--bar", "λ-2"] {
+            assert!(btypes.add(name, "*.test").is_ok(), "{name:?}");
+        }
+        let original_defs = btypes.definitions();
+        for name in ["", "all", "-foo", "foo-", "foo_bar", "foo.bar"] {
+            assert!(btypes.add(name, "*.test").is_err(), "{name:?}");
             assert_eq!(btypes.definitions(), original_defs);
         }
     }

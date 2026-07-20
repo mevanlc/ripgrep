@@ -297,6 +297,13 @@ rgtest!(file_type_add, |dir: Dir, mut cmd: TestCommand| {
     eqnice!("file.wat:Sherlock\n", cmd.stdout());
 });
 
+rgtest!(file_type_add_hyphenated_name, |dir: Dir, mut cmd: TestCommand| {
+    dir.create("file.wat", "Sherlock");
+    cmd.args(&["--type-add", "wat-lang:*.wat", "-t", "wat-lang", "Sherlock"]);
+
+    eqnice!("file.wat:Sherlock\n", cmd.stdout());
+});
+
 rgtest!(file_type_add_compose, |dir: Dir, mut cmd: TestCommand| {
     dir.create("sherlock", SHERLOCK);
     dir.create("file.py", "Sherlock");
