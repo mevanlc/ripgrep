@@ -1172,3 +1172,211 @@ rgtest!(stop_on_nonmatch, |dir: Dir, mut cmd: TestCommand| {
     cmd.args(&["--stop-on-nonmatch", "[235]"]);
     eqnice!("test:line2\ntest:line3\n", cmd.stdout());
 });
+
+rgtest!(replace_escapes_bytes, |dir: Dir, _: TestCommand| {
+    dir.create("input", "left X right\n");
+    for flags in [&[][..], &["--text"][..], &["--binary"][..]] {
+        let mut cmd = dir.command();
+        cmd.args(flags).args([
+            "--replace-escapes",
+            "-r",
+            r"[$1\a\b\f\v\r\t\xFF\377\u03bb\U0001F600\n]",
+            "(X)",
+            "input",
+        ]);
+        let mut replacement = b"[X\x07\x08\x0C\x0B\r\t\xFF\xFF".to_vec();
+        replacement.extend_from_slice("λ😀\n]".as_bytes());
+        let mut expected = b"left ".to_vec();
+        expected.extend_from_slice(&replacement);
+        expected.extend_from_slice(b" right\n");
+        assert_eq!(expected, cmd.output().stdout);
+
+        replacement.push(b'\n');
+        cmd.arg("--only-matching");
+        assert_eq!(replacement, cmd.output().stdout);
+    }
+});
+
+rgtest!(replace_escapes_captures, |dir: Dir, mut cmd: TestCommand| {
+    dir.create("input", "match\n");
+    cmd.args([
+        "--replace-escapes", "-r",
+        r"$1\x61|$word\u0061|$\x31|\x241|\44word|\u0024{1}|\U000000241|$$1|$$$1|$1\x24|\x24$1|$\x24|${1\x7d|$missing",
+        "(?P<word>match)", "input",
+    ]);
+    assert_eq!(
+        b"matcha|matcha|$1|$1|$word|${1}|$1|$1|$match|match$|$match|$$|${1}|\n",
+        &*cmd.output().stdout,
+    );
+});
+
+rgtest!(replace_escapes_capture_bytes, |dir: Dir, mut cmd: TestCommand| {
+    dir.create_bytes("input", b"\\n\\x00$1\xFF\0\n");
+    cmd.args([
+        "--replace-escapes",
+        "--text",
+        "--no-unicode",
+        "-r",
+        "<$1>",
+        "(.+)",
+        "input",
+    ]);
+    assert_eq!(b"<\\n\\x00$1\xFF\0>\n", &*cmd.output().stdout);
+});
+
+rgtest!(replace_escapes_multiline, |dir: Dir, mut cmd: TestCommand| {
+    dir.create("input", "one\ntwo\n");
+    cmd.args([
+        "--replace-escapes",
+        "--multiline",
+        "-r",
+        r"$2\n$1",
+        "(one)\n(two)",
+        "input",
+    ]);
+    assert_eq!(b"two\none\n", &*cmd.output().stdout);
+});
+
+rgtest!(replace_escapes_platform_newline, |dir: Dir, _: TestCommand| {
+    dir.create("input", "match\n");
+    for flags in [&[][..], &["--crlf"][..], &["--null-data"][..]] {
+        let mut cmd = dir.command();
+        cmd.args(flags).args([
+            "--replace-escapes",
+            "--only-matching",
+            "-r",
+            r"a\Rb",
+            "match",
+            "input",
+        ]);
+        let mut expected =
+            if cfg!(windows) { b"a\r\nb".to_vec() } else { b"a\nb".to_vec() };
+        // The printer's final record terminator still follows its normal
+        // options; only the line break inside the replacement is native.
+        let terminator: &[u8] = if flags == ["--null-data"] {
+            b"\0"
+        } else if flags == ["--crlf"] {
+            b"\r\n"
+        } else {
+            b"\n"
+        };
+        expected.extend_from_slice(terminator);
+        assert_eq!(expected, cmd.output().stdout);
+    }
+});
+
+rgtest!(replace_escapes_disabled, |dir: Dir, _: TestCommand| {
+    dir.create("input", "match\n");
+    for flags in [
+        vec![],
+        vec!["--no-replace-escapes"],
+        vec!["--replace-escapes", "--no-replace-escapes"],
+        vec!["--no-replace-escapes", "--replace-escapes"],
+        vec!["--replace-escapes", "--no-replace-escapes", "--replace-escapes"],
+    ] {
+        let mut cmd = dir.command();
+        cmd.args(flags).args(["-r", r"$1\n\0\q\", "(match)", "input"]);
+        assert_eq!(b"match\\n\\0\\q\\\n", &*cmd.output().stdout);
+    }
+});
+
+rgtest!(replace_escapes_config, |dir: Dir, _: TestCommand| {
+    dir.create("input", "match\n");
+    for (config, flags, expected) in [
+        ("--replace-escapes\n", vec![], "\t\n"),
+        ("--replace-escapes\n", vec!["--no-replace-escapes"], "\\t\n"),
+        ("--no-replace-escapes\n", vec!["--replace-escapes"], "\\t\n"),
+        ("--no-replace-escapes\n--replace-escapes\n", vec![], "\\t\n"),
+    ] {
+        dir.create(".ripgreprc", config);
+        let mut cmd = dir.command();
+        cmd.env("RIPGREP_CONFIG_PATH", ".ripgreprc")
+            .args(flags)
+            .args(["-r", r"\t", "match", "input"]);
+        assert_eq!(expected.as_bytes(), cmd.output().stdout);
+    }
+});
+
+rgtest!(replace_escapes_final_value, |dir: Dir, mut cmd: TestCommand| {
+    dir.create("input", "match\n");
+    cmd.args([
+        "-r",
+        r"\0",
+        "--replace-escapes",
+        "-r",
+        r"\t",
+        "match",
+        "input",
+    ]);
+    assert_eq!(b"\t\n", &*cmd.output().stdout);
+    cmd.args(["-r", ""]);
+    assert_eq!(b"\n", &*cmd.output().stdout);
+
+    let mut cmd = dir.command();
+    cmd.args(["--replace-escapes", "match", "input"]);
+    assert_eq!(b"match\n", &*cmd.output().stdout);
+});
+
+rgtest!(replace_escapes_errors, |dir: Dir, _: TestCommand| {
+    dir.create("input", "match\n");
+    for template in [
+        r"\0",
+        r"\00",
+        r"\000",
+        r"\400",
+        r"\x00",
+        r"\u0000",
+        r"\U00000000",
+        r"\q",
+        r"\$",
+        r"\x1",
+        r"\u123",
+        r"\UFFFFFFFF",
+        "\\",
+    ] {
+        // Every error must happen even if no matches would be printed, or
+        // the chosen output mode suppresses replacement text entirely.
+        for flags in [
+            &[][..],
+            &["--text"][..],
+            &["--binary"][..],
+            &["--json"][..],
+            &["--quiet"][..],
+            &["--count"][..],
+        ] {
+            let mut cmd = dir.command();
+            cmd.args(flags).args([
+                "--replace-escapes",
+                "-r",
+                template,
+                "absent",
+                "input",
+            ]);
+            let output = cmd.raw_output();
+            assert_eq!(Some(2), output.status.code(), "{template:?}");
+            assert!(output.stdout.is_empty(), "{template:?}");
+            let stderr = String::from_utf8(output.stderr).unwrap();
+            assert!(
+                stderr.contains("invalid escape in --replace at byte 0"),
+                "{stderr}"
+            );
+        }
+    }
+    let mut cmd = dir.command();
+    cmd.args(["--replace-escapes", "-r", r"\0", "-f", "missing-patterns"]);
+    let output = cmd.raw_output();
+    assert_eq!(Some(2), output.status.code());
+    assert!(
+        String::from_utf8(output.stderr).unwrap().contains("NUL (byte 00)")
+    );
+});
+
+rgtest!(replace_escapes_help_version, |dir: Dir, _: TestCommand| {
+    for flag in ["--help", "--version"] {
+        let mut cmd = dir.command();
+        cmd.args(["--replace-escapes", "-r", r"\0", flag]);
+        let output = cmd.output();
+        assert!(output.stderr.is_empty());
+        assert!(!output.stdout.is_empty());
+    }
+});

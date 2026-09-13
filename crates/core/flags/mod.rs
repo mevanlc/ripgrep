@@ -46,6 +46,7 @@ mod doc;
 mod hiargs;
 mod lowargs;
 mod parse;
+mod replace;
 
 const INDEXING_NOT_SUPPORTED: &'static str =
     "Indexing is not supported in this build of ripgrep.";

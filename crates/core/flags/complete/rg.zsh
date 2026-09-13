@@ -250,6 +250,10 @@ _rg() {
     + '(replace)'
     {-r+,--replace=}'[specify string used to replace matches]:replace string'
 
+    + '(replace-escapes)'
+    '--replace-escapes[interpret C-style escapes in the replacement string]'
+    $no"--no-replace-escapes[disable replacement escape interpretation regardless of argument order]"
+
     + '(sort)'
     '(threads)--sort=[sort results in ascending order (disables parallelism)]:sort method:((
       none\:"no sorting"

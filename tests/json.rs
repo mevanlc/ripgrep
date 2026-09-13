@@ -199,6 +199,36 @@ rgtest!(basic, |dir: Dir, mut cmd: TestCommand| {
     assert_eq!(msgs[4].unwrap_summary().stats.bytes_printed, 494);
 });
 
+rgtest!(replacement_escapes, |dir: Dir, _: TestCommand| {
+    dir.create("input", "match\n");
+    for (template, expected) in [
+        (r"$1\x61\t\u03bb\n\x241", Data::text("matcha\tλ\n$1")),
+        (r"\xFF\377", Data::bytes("//8=")),
+    ] {
+        let mut cmd = dir.command();
+        cmd.args([
+            "--json",
+            "--replace-escapes",
+            "-r",
+            template,
+            "(match)",
+            "input",
+        ]);
+        let msgs = json_decode(&cmd.stdout());
+        let matched = msgs[1].unwrap_match();
+        assert_eq!(Data::text("match\n"), matched.lines);
+        assert_eq!(
+            vec![SubMatch {
+                m: Data::text("match"),
+                replacement: Some(expected),
+                start: 0,
+                end: 5,
+            }],
+            matched.submatches
+        );
+    }
+});
+
 rgtest!(replacement, |dir: Dir, mut cmd: TestCommand| {
     dir.create("sherlock", SHERLOCK);
     cmd.arg("--json")

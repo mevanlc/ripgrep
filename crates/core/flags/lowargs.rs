@@ -101,6 +101,8 @@ pub(crate) struct LowArgs {
     pub(crate) quiet: bool,
     pub(crate) regex_size_limit: Option<usize>,
     pub(crate) replace: Option<BString>,
+    /// An explicit disable wins over every enable, including later ones.
+    pub(crate) replace_escapes: Option<bool>,
     pub(crate) search_zip: bool,
     pub(crate) sort: Option<SortMode>,
     pub(crate) stats: bool,

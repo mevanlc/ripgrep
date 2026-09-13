@@ -128,6 +128,7 @@ pub(super) const FLAGS: &[&dyn Flag] = &[
     &Quiet,
     &RegexSizeLimit,
     &Replace,
+    &ReplaceEscapes,
     &SearchZip,
     &SmartCase,
     &Sort,
@@ -6410,6 +6411,9 @@ expanded shell variables which will most likely be empty.
 .sp
 To write a literal \fB$\fP, use \fB$$\fP.
 .sp
+Backslash escape sequences are interpreted only when \flag{replace-escapes}
+is enabled.
+.sp
 Note that the replacement by default replaces each match, and not the entire
 line. To replace the entire line, you should match the entire line.
 .sp
@@ -6445,6 +6449,102 @@ fn test_replace() {
 
     let args = parse_low_raw(["-r", "foo", "-r", ""]).unwrap();
     assert_eq!(Some(BString::from("")), args.replace);
+}
+
+/// --replace-escapes
+#[derive(Debug)]
+struct ReplaceEscapes;
+
+impl Flag for ReplaceEscapes {
+    fn is_switch(&self) -> bool {
+        true
+    }
+    fn name_long(&self) -> &'static str {
+        "replace-escapes"
+    }
+    fn name_negated(&self) -> Option<&'static str> {
+        Some("no-replace-escapes")
+    }
+    fn doc_category(&self) -> Category {
+        Category::Output
+    }
+    fn doc_short(&self) -> &'static str {
+        r"Interpret C-style escapes in the replacement string."
+    }
+    fn doc_long(&self) -> &'static str {
+        r"
+Enables interpretation of C-style escapes in the \flag{replace} string:
+.sp
+.nf
+    \\a (alert)        \\b (backspace)           \\f (form-feed)
+    \\v (vertical-tab) \\r (carriage-return)     \\t (horizontal-tab)
+    \\n (new-line)     \\R (platform-line-break) \\\\ (literal-backslash)
+.fi
+.sp
+\fB\\R\fP produces CRLF on Windows and LF elsewhere, independently of
+\flag{crlf} and \flag{null-data}.
+.sp
+\fB\\xHH\fP consumes exactly two hexadecimal digits and produces one byte.
+Octal escapes \fB\\N\fP, \fB\\NN\fP and \fB\\NNN\fP greedily consume
+one to three digits from 0 to 7 and produce one byte modulo 256. These byte
+escapes may produce invalid UTF-8 without requiring \flag{text} or
+\flag{binary}.
+.sp
+\fB\\uHHHH\fP and \fB\\UHHHHHHHH\fP consume exactly four and eight
+hexadecimal digits, respectively, and encode the Unicode scalar value as
+UTF-8. Surrogates (D800 through DFFF) and values above 10FFFF are errors.
+Additional digits after a complete escape are ordinary text.
+.sp
+Backreference placeholders must be written in the original replacement text
+using a literal dollar sign. Escapes cannot introduce or extend a placeholder:
+\fB$1\\x61\fP is capture 1 followed by \fBa\fP, while \fB$\\x31\fP and
+\fB\\x241\fP both produce literal \fB$1\fP. Dollar signs are still escaped
+via \fB$$\fP and cannot be escaped via \fB\\$\fP.
+.sp
+Escape interpretation is not recursive. Backreferences that resolve to a
+string containing escape sequences or arbitrary bytes retain those contents
+unchanged.
+.sp
+Unknown or malformed escapes, a trailing backslash, and escapes that resolve
+to NUL (byte 00) are errors. ripgrep displays a diagnostic and exits with code
+2 before searching, even with \flag{text} or \flag{binary}.
+.sp
+Only the final \flag{replace} value is interpreted. Without a replacement
+string, this flag has no effect.
+.sp
+\flag-negate{replace-escapes} is the default behavior. An explicit
+\flag-negate{replace-escapes} anywhere in the configuration file or command
+line disables escape interpretation and validation, regardless of later
+\flag{replace-escapes} flags.
+"
+    }
+
+    fn update(&self, v: FlagValue, args: &mut LowArgs) -> anyhow::Result<()> {
+        if args.replace_escapes != Some(false) {
+            args.replace_escapes = Some(v.unwrap_switch());
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn test_replace_escapes() {
+    let args = parse_low_raw(None::<&str>).unwrap();
+    assert_eq!(None, args.replace_escapes);
+
+    let args = parse_low_raw(["--replace-escapes"]).unwrap();
+    assert_eq!(Some(true), args.replace_escapes);
+
+    for flags in [
+        vec!["--no-replace-escapes"],
+        vec!["--replace-escapes", "--no-replace-escapes"],
+        vec!["--no-replace-escapes", "--replace-escapes"],
+        vec!["--replace-escapes", "--no-replace-escapes", "--replace-escapes"],
+    ] {
+        let args = parse_low_raw(flags).unwrap();
+        assert_eq!(Some(false), args.replace_escapes);
+    }
 }
 
 /// -z/--search-zip

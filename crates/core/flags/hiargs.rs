@@ -115,6 +115,11 @@ impl HiArgs {
         // Callers should not be trying to convert low-level arguments when
         // a short-circuiting special mode is present.
         assert_eq!(None, low.special, "special mode demands short-circuiting");
+        if low.replace_escapes == Some(true)
+            && let Some(ref mut replacement) = low.replace
+        {
+            *replacement = super::replace::prepare(replacement)?;
+        }
         // If the sorting mode isn't supported, then we bail loudly. I'm not
         // sure if this is the right thing to do. We could silently "not sort"
         // as well. If we wanted to go that route, then we could just set

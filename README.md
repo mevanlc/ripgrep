@@ -11,11 +11,49 @@ This fork tracks upstream ripgrep and adds a few focused conveniences:
 
 - shorthand preview modes for `-M/--max-columns`, including a centered preview
   that keeps the first match visible;
+- optional C-style escape interpretation in replacement strings;
 - built-in file types for archives, compressed files and specific compressed
   tar formats; and
 - support for internal hyphens in custom file type names.
 
 Everything else behaves like upstream ripgrep unless noted below.
+
+### replacement escapes
+
+`--replace-escapes` interprets escapes in the final `-r/--replace` string:
+
+```console
+$ rg --replace-escapes -r '$1\t$2' '(\w+) (\w+)'
+```
+
+Supported escapes are `\a` (alert), `\b` (backspace), `\f` (form-feed),
+`\v` (vertical-tab), `\r`, `\t`, `\n`, `\\` (literal backslash), and `\R`
+(CRLF on Windows, LF elsewhere, independently of `--crlf` or `--null-data`).
+Numeric forms are:
+
+- `\xHH`: exactly two hexadecimal digits producing one raw byte;
+- `\N`, `\NN`, `\NNN`: one to three octal digits, consumed greedily, producing
+  one raw byte modulo 256;
+- `\uHHHH`, `\UHHHHHHHH`: exactly four or eight hexadecimal digits encoding
+  a Unicode scalar as UTF-8. Surrogates and values above `10FFFF` are errors.
+
+Additional digits after a complete escape are ordinary text. Raw byte escapes
+may produce invalid UTF-8 without `--text` or `--binary`. JSON output uses its
+existing base64 representation for replacement text that is not valid UTF-8.
+
+Capture placeholders are recognized before decoding: `$1\x61` means capture 1
+followed by `a`, while `$\x31` and `\x241` both produce literal `$1`. Use `$$`
+for a literal dollar; `\$` is an error. Decoding is not recursive, and captured
+contents are never decoded or subjected to escape validation.
+
+Unknown or malformed escapes, a trailing backslash, or any escape producing
+NUL (byte 00) cause a diagnostic and exit status 2 before searching. Neither
+`--text` nor `--binary` bypasses these errors. Only the final replacement is
+validated; the flag has no effect without a replacement.
+
+Escape interpretation is disabled by default. An explicit
+`--no-replace-escapes` anywhere in the configuration file or command line
+disables interpretation and validation, even if `--replace-escapes` follows it.
 
 ### max-column preview suffixes
 
