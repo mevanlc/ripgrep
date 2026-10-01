@@ -8,7 +8,7 @@ use std::{
 };
 
 use {
-    bstr::BString,
+    bstr::{BString, ByteSlice},
     grep::printer::{ColorSpecs, SummaryKind},
 };
 
@@ -16,8 +16,9 @@ use crate::{
     flags::lowargs::{
         BinaryMode, BoundaryMode, BufferMode, CaseMode, ColorChoice,
         ContextMode, ContextSeparator, EncodingMode, EngineChoice,
-        FieldContextSeparator, FieldMatchSeparator, LowArgs, MmapMode, Mode,
-        PatternSource, SearchMode, SortMode, SortModeKind, TypeChange,
+        FieldContextSeparator, FieldMatchSeparator, InputSource, LowArgs,
+        MmapMode, Mode, PatternSource, SearchMode, SortMode, SortModeKind,
+        TypeChange,
     },
     haystack::{Haystack, HaystackBuilder},
     search::{PatternMatcher, Printer, SearchWorker, SearchWorkerBuilder},
@@ -145,6 +146,7 @@ impl HiArgs {
             _ => {}
         }
 
+        State::check_stdin(&low)?;
         let mut state = State::new()?;
         let patterns = Patterns::from_low_args(&mut state, &mut low)?;
         let paths = Paths::from_low_args(&mut state, &patterns, &mut low)?;
@@ -880,10 +882,7 @@ impl HiArgs {
     /// choose to explicitly use single threaded traversal since it won't have
     /// the unnecessary overhead of synchronization.
     pub(crate) fn walk_builder(&self) -> anyhow::Result<ignore::WalkBuilder> {
-        let mut builder = ignore::WalkBuilder::new(&self.paths.paths[0]);
-        for path in self.paths.paths.iter().skip(1) {
-            builder.add(path);
-        }
+        let mut builder = ignore::WalkBuilder::from_iter(&self.paths.paths);
         if !self.no_ignore_files {
             for path in self.ignore_file.iter() {
                 if let Some(err) = builder.add_ignore(path) {
@@ -951,6 +950,45 @@ struct State {
 }
 
 impl State {
+    /// Reject known conflicts before opening any stdin reader.
+    fn check_stdin(low: &LowArgs) -> anyhow::Result<()> {
+        if !matches!(low.mode, Mode::Search(_) | Mode::Files) {
+            return Ok(());
+        }
+        let patterns_stdin = matches!(low.mode, Mode::Search(_))
+            && low.patterns.iter().any(|source| {
+                matches!(source, PatternSource::File(path) if path == Path::new("-"))
+            });
+        let mut first_is_pattern =
+            matches!(low.mode, Mode::Search(_)) && low.patterns.is_empty();
+        let mut lists_stdin = 0;
+        let mut search_stdin = false;
+        for input in &low.inputs {
+            match input {
+                InputSource::PositionalArgument(value) => {
+                    if first_is_pattern {
+                        first_is_pattern = false;
+                    } else if value == "-" {
+                        search_stdin = true;
+                    }
+                }
+                InputSource::LineTerminated(path)
+                | InputSource::NulTerminated(path) => {
+                    if path == Path::new("-") {
+                        lists_stdin += 1;
+                    }
+                }
+            }
+        }
+        anyhow::ensure!(
+            lists_stdin <= 1
+                && (lists_stdin == 0 || (!patterns_stdin && !search_stdin)),
+            "stdin cannot be used for more than one of --in/--in0, \
+             -f/--file, or search input"
+        );
+        Ok(())
+    }
+
     /// Initialize state to some sensible defaults.
     ///
     /// Note that the state values may change throughout the lifetime of
@@ -1002,11 +1040,18 @@ impl Patterns {
         // If we got nothing from -e/--regexp and -f/--file, then the first
         // positional is a pattern.
         if low.patterns.is_empty() {
-            anyhow::ensure!(
-                !low.positional.is_empty(),
-                "ripgrep requires at least one pattern to execute a search"
-            );
-            let ospat = low.positional.remove(0);
+            let Some(index) = low.inputs.iter().position(|input| {
+                matches!(input, InputSource::PositionalArgument(_))
+            }) else {
+                anyhow::bail!(
+                    "ripgrep requires at least one pattern to execute a search"
+                );
+            };
+            let InputSource::PositionalArgument(ospat) =
+                low.inputs.remove(index)
+            else {
+                unreachable!("selected a positional argument");
+            };
             let Ok(pat) = ospat.into_string() else {
                 anyhow::bail!("pattern given is not valid UTF-8")
             };
@@ -1058,7 +1103,7 @@ impl Patterns {
 
 /// The collection of paths we want to search for.
 ///
-/// This guarantees that there is always at least one path.
+/// This can be empty when an explicitly supplied input list is empty.
 #[derive(Debug)]
 struct Paths {
     /// The actual paths.
@@ -1082,23 +1127,37 @@ impl Paths {
         low: &mut LowArgs,
     ) -> anyhow::Result<Paths> {
         // We require a `&Patterns` even though we don't use it to ensure that
-        // patterns have already been read from LowArgs. This let's us safely
+        // patterns have already been read from LowArgs. This lets us safely
         // assume that all remaining positional arguments are intended to be
         // file paths.
 
-        let mut paths = Vec::with_capacity(low.positional.len());
-        for osarg in low.positional.drain(..) {
-            let path = PathBuf::from(osarg);
-            if state.stdin_consumed && path == Path::new("-") {
-                anyhow::bail!(
-                    "error: attempted to read patterns from stdin \
-                     while also searching stdin",
-                );
+        let read_lists = matches!(low.mode, Mode::Search(_) | Mode::Files);
+        let has_input_list = read_lists
+            && low.inputs.iter().any(|input| {
+                !matches!(input, InputSource::PositionalArgument(_))
+            });
+        let mut paths = Vec::with_capacity(low.inputs.len());
+        for input in low.inputs.drain(..) {
+            match input {
+                InputSource::PositionalArgument(value) => {
+                    paths.push(PathBuf::from(value));
+                }
+                InputSource::LineTerminated(path) if read_lists => {
+                    Self::add_input_list(state, &path, b'\n', &mut paths)?;
+                }
+                InputSource::NulTerminated(path) if read_lists => {
+                    Self::add_input_list(state, &path, b'\x00', &mut paths)?;
+                }
+                _ => {}
             }
-            paths.push(path);
         }
+        anyhow::ensure!(
+            !state.stdin_consumed
+                || !paths.iter().any(|path| path == Path::new("-")),
+            "attempted to read patterns or input paths from stdin while also searching stdin"
+        );
         log::debug!("number of paths given to search: {}", paths.len());
-        if !paths.is_empty() {
+        if !paths.is_empty() || has_input_list {
             let is_one_file = paths.len() == 1
                 // Note that we specifically use `!paths[0].is_dir()` here
                 // instead of `paths[0].is_file()`. Namely, the latter can
@@ -1144,6 +1203,111 @@ impl Paths {
     /// Returns true if ripgrep will only search stdin and nothing else.
     fn is_only_stdin(&self) -> bool {
         self.paths.len() == 1 && self.paths[0] == Path::new("-")
+    }
+
+    /// Append a list's paths without changing their spelling or order.
+    fn add_input_list(
+        state: &mut State,
+        source: &Path,
+        terminator: u8,
+        paths: &mut Vec<PathBuf>,
+    ) -> anyhow::Result<()> {
+        use anyhow::Context;
+
+        if source == Path::new("-") {
+            anyhow::ensure!(
+                !state.stdin_consumed
+                    && !paths.iter().any(|path| path == Path::new("-")),
+                "stdin cannot supply an input path list when it is also used for patterns or search input"
+            );
+            state.stdin_consumed = true;
+            Self::read_input_list(
+                std::io::stdin().lock(),
+                source,
+                terminator,
+                paths,
+            )?;
+        } else {
+            let flag = if terminator == b'\n' { "--in" } else { "--in0" };
+            let file = std::fs::File::open(source)
+                .with_context(|| format!("{}: {flag}", source.display()))?;
+            Self::read_input_list(file, source, terminator, paths)?;
+        }
+        Ok(())
+    }
+
+    fn read_input_list(
+        reader: impl std::io::Read,
+        source: &Path,
+        terminator: u8,
+        paths: &mut Vec<PathBuf>,
+    ) -> anyhow::Result<()> {
+        use {anyhow::Context, std::io::BufRead};
+
+        let flag = if terminator == b'\n' { "--in" } else { "--in0" };
+        let source = if source == Path::new("-") {
+            "stdin".to_owned()
+        } else {
+            source.display().to_string()
+        };
+        let mut reader = std::io::BufReader::new(reader);
+        let mut record = Vec::new();
+        let mut record_number = 0;
+        loop {
+            record.clear();
+            record_number += 1;
+            let context =
+                || format!("{source}: {flag}: record {record_number}");
+            if reader
+                .read_until(terminator, &mut record)
+                .with_context(context)?
+                == 0
+            {
+                break;
+            }
+            if record.last() == Some(&terminator) {
+                record.pop();
+                if terminator == b'\n' && record.last() == Some(&b'\r') {
+                    record.pop();
+                }
+            }
+            anyhow::ensure!(!record.is_empty(), "{}: empty path", context());
+            anyhow::ensure!(
+                terminator != b'\n' || !record.contains(&b'\x00'),
+                "{}: path contains a NUL byte; use --in0 for NUL-terminated paths",
+                context()
+            );
+            let path = record.to_path().with_context(context)?;
+            paths.push(path.to_path_buf());
+        }
+        Ok(())
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::Paths;
+    use std::path::Path;
+
+    #[test]
+    fn input_non_utf8_paths() {
+        use std::os::unix::ffi::OsStrExt;
+
+        for (terminator, input) in [
+            (b'\n', &b"file\xff\r\ncarriage\r"[..]),
+            (b'\x00', &b"file\xff\0carriage\r\0"[..]),
+        ] {
+            let mut paths = Vec::new();
+            Paths::read_input_list(
+                input,
+                Path::new("paths"),
+                terminator,
+                &mut paths,
+            )
+            .unwrap();
+            assert_eq!(b"file\xff", paths[0].as_os_str().as_bytes());
+            assert_eq!(b"carriage\r", paths[1].as_os_str().as_bytes());
+        }
     }
 }
 

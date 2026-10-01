@@ -99,6 +99,10 @@ _rg() {
     + file
     '(1)*'{-f+,--file=}'[specify file containing patterns to search for]: :_files'
 
+    + input
+    '*--in=[specify file containing newline-terminated paths to search]: :_files'
+    '*--in0=[specify file containing NUL-terminated paths to search]: :_files'
+
     + '(file-match)'
     '(stats)'{-l,--files-with-matches}'[only show names of files with matches]'
     '(stats)--files-without-match[only show names of files without matches]'

@@ -34,7 +34,7 @@ pub(crate) struct LowArgs {
     // Essential arguments.
     pub(crate) special: Option<SpecialMode>,
     pub(crate) mode: Mode,
-    pub(crate) positional: Vec<OsString>,
+    pub(crate) inputs: Vec<InputSource>,
     pub(crate) patterns: Vec<PatternSource>,
     // Everything else, sorted lexicographically.
     pub(crate) binary: BinaryMode,
@@ -650,6 +650,18 @@ pub(crate) enum MmapMode {
     /// when multi-line search is enabled where ripgrep will read the entire
     /// contents of a file on to the heap before searching it.
     Never,
+}
+
+/// A positional argument or a list of paths, in command-line order.
+///
+/// The first positional argument may be interpreted as a pattern later.
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) enum InputSource {
+    PositionalArgument(OsString),
+    /// A file containing LF- or CRLF-terminated paths (`--in`).
+    LineTerminated(PathBuf),
+    /// A file containing NUL-terminated paths (`--in0`).
+    NulTerminated(PathBuf),
 }
 
 /// Represents a source of patterns that ripgrep should search for.

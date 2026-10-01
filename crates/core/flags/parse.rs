@@ -10,7 +10,7 @@ use crate::flags::{
     Flag, FlagValue,
     defs::FLAGS,
     hiargs::HiArgs,
-    lowargs::{LoggingMode, LowArgs, SpecialMode},
+    lowargs::{InputSource, LoggingMode, LowArgs, SpecialMode},
 };
 
 /// The result of parsing CLI arguments.
@@ -227,7 +227,7 @@ impl Parser {
         while let Some(arg) = p.next().context("invalid CLI arguments")? {
             let lookup = match arg {
                 lexopt::Arg::Value(value) => {
-                    args.positional.push(value);
+                    args.inputs.push(InputSource::PositionalArgument(value));
                     continue;
                 }
                 lexopt::Arg::Short(ch) if ch == 'h' => {

@@ -26,8 +26,8 @@ use crate::flags::{
     lowargs::{
         BinaryMode, BoundaryMode, BufferMode, CaseMode, ColorChoice,
         ContextMode, EncodingMode, EngineChoice, GenerateMode, IndexMode,
-        LoggingMode, LowArgs, MmapMode, Mode, PatternSource, SearchMode,
-        SortMode, SortModeKind, SpecialMode, TypeChange,
+        InputSource, LoggingMode, LowArgs, MmapMode, Mode, PatternSource,
+        SearchMode, SortMode, SortModeKind, SpecialMode, TypeChange,
     },
 };
 
@@ -83,6 +83,8 @@ pub(super) const FLAGS: &[&dyn Flag] = &[
     &IgnoreCase,
     &IgnoreFile,
     &IgnoreFileCaseInsensitive,
+    &In,
+    &In0,
     &IncludeZero,
     &Index,
     &IndexCrud,
@@ -3330,6 +3332,153 @@ fn test_ignore_file_case_insensitive() {
     assert_eq!(true, args.ignore_file_case_insensitive);
 }
 
+/// --in
+#[derive(Debug)]
+struct In;
+
+impl Flag for In {
+    fn is_switch(&self) -> bool {
+        false
+    }
+    fn name_long(&self) -> &'static str {
+        "in"
+    }
+    fn doc_variable(&self) -> Option<&'static str> {
+        Some("PATH")
+    }
+    fn doc_category(&self) -> Category {
+        Category::Input
+    }
+    fn doc_short(&self) -> &'static str {
+        "Read paths to search from a newline-terminated list."
+    }
+    fn doc_long(&self) -> &'static str {
+        r"
+Read files and directories to search from the given file, one path per line.
+When \fIPATH\fP is \fB-\fP, read the list from stdin.
+.sp
+The paths behave as if they were supplied as positional arguments where this
+flag appears. Relative paths are resolved from the current working directory.
+Directories are searched recursively, and explicitly named files bypass
+discovery filters just like command-line paths. This flag may be repeated and
+combined with \flag{in0} and positional search paths. Duplicate paths are kept.
+.sp
+LF and CRLF line terminators are removed; all other bytes and whitespace are
+preserved. A final path without a terminator is accepted. Empty records and NUL
+bytes are errors. Use \flag{in0} for paths containing newlines. Path names are
+taken as-is on Unix and decoded as UTF-8 on other platforms.
+.sp
+A zero-byte list contributes no paths. If no search paths remain, ripgrep
+searches nothing instead of falling back to the current directory or stdin.
+Lists are read completely before searching. A path of \fB-\fP searches stdin;
+use \fB./-\fP to search a file named \fB-\fP. Stdin cannot also supply patterns
+or search input when it supplies an input list.
+.sp
+This flag applies to searches and \flag{files}.
+"
+    }
+    fn completion_type(&self) -> CompletionType {
+        CompletionType::Filename
+    }
+    fn update(&self, v: FlagValue, args: &mut LowArgs) -> anyhow::Result<()> {
+        args.inputs.push(InputSource::LineTerminated(PathBuf::from(
+            v.unwrap_value(),
+        )));
+        Ok(())
+    }
+}
+
+/// --in0
+#[derive(Debug)]
+struct In0;
+
+impl Flag for In0 {
+    fn is_switch(&self) -> bool {
+        false
+    }
+    fn name_long(&self) -> &'static str {
+        "in0"
+    }
+    fn doc_variable(&self) -> Option<&'static str> {
+        Some("PATH")
+    }
+    fn doc_category(&self) -> Category {
+        Category::Input
+    }
+    fn doc_short(&self) -> &'static str {
+        "Read paths to search from a NUL-terminated list."
+    }
+    fn doc_long(&self) -> &'static str {
+        r"
+Read files and directories to search from the given file, with paths terminated
+by NUL bytes. When \fIPATH\fP is \fB-\fP, read the list from stdin.
+.sp
+This is identical to \flag{in}, except that NUL terminates each path instead of
+LF or CRLF. All other bytes, including newlines and whitespace, are preserved.
+A final path without a terminator is accepted. Empty records are errors, while
+a zero-byte list contributes no paths. Use this flag with path lists produced
+by \flag{null}, for example:
+.sp
+.EX
+    rg --files -0 | rg --in0 - pattern
+.EE
+"
+    }
+    fn completion_type(&self) -> CompletionType {
+        CompletionType::Filename
+    }
+    fn update(&self, v: FlagValue, args: &mut LowArgs) -> anyhow::Result<()> {
+        args.inputs
+            .push(InputSource::NulTerminated(PathBuf::from(v.unwrap_value())));
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn test_in_in0() {
+    for (flag, constructor) in [
+        ("--in", InputSource::LineTerminated as fn(PathBuf) -> InputSource),
+        ("--in0", InputSource::NulTerminated as fn(PathBuf) -> InputSource),
+    ] {
+        for path in ["paths.txt", "-", "-paths.txt"] {
+            for args in [
+                vec![flag.to_owned(), path.to_owned()],
+                vec![format!("{flag}={path}")],
+            ] {
+                let low = parse_low_raw(args).unwrap();
+                assert_eq!(vec![constructor(PathBuf::from(path))], low.inputs);
+            }
+        }
+        assert!(parse_low_raw([flag]).is_err());
+    }
+    let low = parse_low_raw([
+        "pattern",
+        "a",
+        "--in",
+        "lines",
+        "b",
+        "--in0=nuls",
+        "--in",
+        "more",
+        "--",
+        "-file",
+    ])
+    .unwrap();
+    assert_eq!(
+        vec![
+            InputSource::PositionalArgument("pattern".into()),
+            InputSource::PositionalArgument("a".into()),
+            InputSource::LineTerminated("lines".into()),
+            InputSource::PositionalArgument("b".into()),
+            InputSource::NulTerminated("nuls".into()),
+            InputSource::LineTerminated("more".into()),
+            InputSource::PositionalArgument("-file".into()),
+        ],
+        low.inputs
+    );
+}
+
 /// --include-zero
 #[derive(Debug)]
 struct IncludeZero;
@@ -3568,7 +3717,10 @@ fn test_index_crud() {
 
     let args = parse_low_raw(["--files", "--x-crud", "foo"]).unwrap();
     assert_eq!(Mode::Index(IndexMode::Crud), args.mode);
-    assert_eq!(vec![std::ffi::OsString::from("foo")], args.positional);
+    assert_eq!(
+        vec![InputSource::PositionalArgument("foo".into())],
+        args.inputs
+    );
 
     let args = parse_low_raw(["--x-crud", "--files"]).unwrap();
     assert_eq!(Mode::Files, args.mode);
