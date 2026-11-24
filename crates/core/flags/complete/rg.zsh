@@ -99,10 +99,6 @@ _rg() {
     + file
     '(1)*'{-f+,--file=}'[specify file containing patterns to search for]: :_files'
 
-    + input
-    '*--in=[specify file containing newline-terminated paths to search]: :_files'
-    '*--in0=[specify file containing NUL-terminated paths to search]: :_files'
-
     + '(file-match)'
     '(stats)'{-l,--files-with-matches}'[only show names of files with matches]'
     '(stats)--files-without-match[only show names of files without matches]'
@@ -125,6 +121,7 @@ _rg() {
 
     + glob
     '*'{-g+,--glob=}'[include/exclude files matching specified glob]:glob pattern:_files'
+    '*'{-G+,--glob-not=}'[exclude files matching specified glob]:glob pattern:_files'
     '*--iglob=[include/exclude files matching specified case-insensitive glob]:glob pattern:_files'
 
     + '(glob-case-insensitive)'
@@ -178,6 +175,10 @@ _rg() {
     + '(ignore-files)'
     "--no-ignore-files[don't respect --ignore-file flags]"
     $no'--ignore-files[respect --ignore-file files]'
+
+    + input
+    '*--in=[specify text file containing paths to search]: :_files'
+    '*--in0=[specify binary file containing NUL-terminated paths to search]: :_files'
 
     + '(invert-match)'
     {-v,--invert-match}'[invert matching]'
@@ -324,8 +325,8 @@ _rg() {
     ))'
     '*--colors=[specify color and style settings]: :_rg_color_specs'
     '--debug[show debug messages]'
-    '--field-context-separator[set string to delimit fields in context lines]'
-    '--field-match-separator[set string to delimit fields in matching lines]'
+    '--field-context-separator=[set string to delimit fields in context lines]:separator'
+    '--field-match-separator=[set string to delimit fields in matching lines]:separator'
     '--generate=[generate specified data (e.g. man page or completion script)]:data to generate:((
       man\:"man page"
       complete-bash\:"shell completions for bash"
@@ -346,6 +347,9 @@ _rg() {
     '
     '(-m --max-count)'{-m+,--max-count=}'[specify max number of matches per file]: :\
       _numbers -dunlimited -l0 "max matches per file"
+    '
+    '--max-bytes=[limit how many bytes are searched per file]: :\
+      _numbers -ubytes -d0 -l0 "max bytes searched"
     '
     '--max-filesize=[specify size above which files should be ignored]: :\
       _numbers -ubytes -dunlimited -l0 "max file size" K M G
@@ -388,7 +392,7 @@ _rg_color_specs() {
 
   elif compset -P '[^:]##:style:'; then
     _describe -t $tag 'style name' '(
-      {,no}bold {,no}intense {,no}underline
+      {,no}bold {,no}intense {,no}underline {,no}italic
     )'
 
   elif compset -P '[^:]##:'; then

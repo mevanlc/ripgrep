@@ -227,6 +227,9 @@ impl Parser {
         while let Some(arg) = p.next().context("invalid CLI arguments")? {
             let lookup = match arg {
                 lexopt::Arg::Value(value) => {
+                    // Note: the first positional argument may be
+                    // reinterpreted as a pattern later on
+                    // if no -e/--regexp or -f/--file is given.
                     args.inputs.push(InputSource::PositionalArgument(value));
                     continue;
                 }

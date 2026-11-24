@@ -54,6 +54,7 @@ struct Config {
     separator_field_match: Arc<Vec<u8>>,
     separator_field_context: Arc<Vec<u8>>,
     separator_path: Option<u8>,
+    escape_path: bool,
     path_terminator: Option<u8>,
 }
 
@@ -80,6 +81,7 @@ impl Default for Config {
             separator_field_match: Arc::new(b":".to_vec()),
             separator_field_context: Arc::new(b"-".to_vec()),
             separator_path: None,
+            escape_path: false,
             path_terminator: None,
         }
     }
@@ -465,6 +467,12 @@ impl StandardBuilder {
         self
     }
 
+    /// Replace control characters in printed file paths with U+FFFD.
+    pub fn escape_path(&mut self, yes: bool) -> &mut StandardBuilder {
+        self.config.escape_path = yes;
+        self
+    }
+
     /// Set the path terminator used.
     ///
     /// The path terminator is a byte that is printed after every file path
@@ -573,7 +581,8 @@ impl<W: WriteColor> Standard<W> {
             hyperlink::Interpolator::new(&self.config.hyperlink);
         let stats = if self.config.stats { Some(Stats::new()) } else { None };
         let ppath = PrinterPath::new(path.as_ref())
-            .with_separator(self.config.separator_path);
+            .with_separator(self.config.separator_path)
+            .with_escape(self.config.escape_path);
         let needs_match_granularity = self.needs_match_granularity();
         StandardSink {
             matcher,
@@ -1608,7 +1617,7 @@ impl<'a, M: Matcher, W: WriteColor> StandardImpl<'a, M, W> {
     fn write_path(&self, path: &PrinterPath) -> io::Result<()> {
         let mut wtr = self.wtr().borrow_mut();
         wtr.set_color(self.config().colors.path())?;
-        wtr.write_all(path.as_bytes())?;
+        wtr.write_all(path.as_display_bytes())?;
         wtr.reset()
     }
 
@@ -1624,6 +1633,9 @@ impl<'a, M: Matcher, W: WriteColor> StandardImpl<'a, M, W> {
         line_number: Option<u64>,
         column: Option<u64>,
     ) -> io::Result<hyperlink::InterpolatorStatus> {
+        if self.config().hyperlink.format().is_empty() {
+            return Ok(hyperlink::InterpolatorStatus::inactive());
+        }
         let Some(hyperpath) = path.as_hyperlink() else {
             return Ok(hyperlink::InterpolatorStatus::inactive());
         };
@@ -1658,6 +1670,23 @@ impl<'a, M: Matcher, W: WriteColor> StandardImpl<'a, M, W> {
                 .set_color(self.config().colors.highlight())?;
         } else {
             self.wtr().borrow_mut().reset()?;
+        }
+        let bg = self.config().colors.matched().bg().is_some();
+        let mut wtr = self.wtr().borrow_mut();
+        // When a match wraps and scrolls the terminal, newly exposed cells can
+        // inherit its background color. Resetting the color leaves those cells
+        // unchanged, so \x1b[K (erase to end of line) clears them.
+        // See https://bugzilla.gnome.org/show_bug.cgi?id=754596
+        //
+        // Unlike termcolor's set_color/reset methods, this raw escape requires
+        // an ANSI writer. For termcolor's writers, supports_hyperlinks() is
+        // true for ANSI and false for no-color and legacy Windows writers.
+        //
+        // Write directly to the underlying writer so the escape isn't counted
+        // as printed text.
+        if bg && wtr.supports_hyperlinks() {
+            const ERASE_IN_LINE: &[u8] = b"\x1b[K";
+            wtr.get_mut().write_all(ERASE_IN_LINE)?;
         }
         self.in_color_match.set(false);
         Ok(())

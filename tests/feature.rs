@@ -618,6 +618,37 @@ rgtest!(f948_exit_code_error, |dir: Dir, mut cmd: TestCommand| {
     cmd.assert_exit_code(2);
 });
 
+// See: https://github.com/BurntSushi/ripgrep/issues/3317
+rgtest!(f3317_ripgrep_threads_env, |dir: Dir, mut cmd: TestCommand| {
+    dir.create("file", "needle haystack");
+    cmd.cmd().env("RIPGREP_THREADS", "1");
+    cmd.arg("needle").arg("file");
+    cmd.assert_exit_code(0);
+});
+
+// See: https://github.com/BurntSushi/ripgrep/issues/3317
+rgtest!(
+    f3317_ripgrep_threads_env_invalid,
+    |dir: Dir, mut cmd: TestCommand| {
+        dir.create("a", "needle");
+        dir.create("b", "needle");
+        cmd.cmd().env("RIPGREP_THREADS", "nope");
+        cmd.arg("needle").arg(".");
+        cmd.assert_exit_code(2);
+    }
+);
+
+// See: https://github.com/BurntSushi/ripgrep/issues/3317
+rgtest!(
+    f3317_ripgrep_threads_cli_overrides_env,
+    |dir: Dir, mut cmd: TestCommand| {
+        dir.create("file", "needle");
+        cmd.cmd().env("RIPGREP_THREADS", "nope");
+        cmd.arg("--threads").arg("1").arg("needle").arg("file");
+        cmd.assert_exit_code(0);
+    }
+);
+
 // See: https://github.com/BurntSushi/ripgrep/issues/917
 rgtest!(f917_trim, |dir: Dir, mut cmd: TestCommand| {
     const SHERLOCK: &'static str = "\
@@ -1378,5 +1409,33 @@ rgtest!(replace_escapes_help_version, |dir: Dir, _: TestCommand| {
         let output = cmd.output();
         assert!(output.stderr.is_empty());
         assert!(!output.stdout.is_empty());
+    }
+});
+
+// See: https://github.com/BurntSushi/ripgrep/pull/3630
+rgtest!(color_background_cleanup, |dir: Dir, _: TestCommand| {
+    dir.create("one", "before me after\n");
+    dir.create("two", "before me after\n");
+    for threads in ["1", "2"] {
+        for (color, spec, should_clear) in [
+            ("ansi", "match:bg:blue", true),
+            ("ansi", "match:fg:white", false),
+            ("never", "match:bg:blue", false),
+        ] {
+            let mut cmd = dir.command();
+            cmd.args(&[
+                "--threads",
+                threads,
+                "--color",
+                color,
+                "--colors=match:none",
+                "--colors",
+                spec,
+                "me",
+                ".",
+            ]);
+            let output = cmd.stdout();
+            assert_eq!(output.contains("\x1b[K"), should_clear);
+        }
     }
 });

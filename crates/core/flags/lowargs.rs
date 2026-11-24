@@ -4,7 +4,7 @@ Provides the definition of low level arguments from CLI flags.
 
 use std::{
     ffi::{OsStr, OsString},
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 
 use {
@@ -65,12 +65,10 @@ pub(crate) struct LowArgs {
     pub(crate) ignore_file: Vec<PathBuf>,
     pub(crate) ignore_file_case_insensitive: bool,
     pub(crate) include_zero: bool,
-    pub(crate) index: usize,
-    pub(crate) index_force: bool,
-    pub(crate) index_path: Option<PathBuf>,
     pub(crate) invert_match: bool,
     pub(crate) line_number: Option<bool>,
     pub(crate) logging: Option<LoggingMode>,
+    pub(crate) max_bytes: Option<u64>,
     pub(crate) max_columns: Option<u64>,
     pub(crate) max_columns_preview: bool,
     pub(crate) max_columns_preview_center: bool,
@@ -159,8 +157,6 @@ pub(crate) enum SpecialMode {
 pub(crate) enum Mode {
     /// ripgrep will execute a search of some kind.
     Search(SearchMode),
-    /// Create or update a search index.
-    Index(IndexMode),
     /// Show the files that *would* be searched, but don't actually search
     /// them.
     Files,
@@ -195,13 +191,6 @@ impl Mode {
             }
         }
     }
-}
-
-/// The kind of index operation that ripgrep should perform.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum IndexMode {
-    /// Add, update or remove files in an index.
-    Crud,
 }
 
 /// The kind of search that ripgrep is going to perform.
@@ -239,6 +228,8 @@ pub(crate) enum GenerateMode {
     CompleteZsh,
     /// Completions for fish.
     CompleteFish,
+    /// Completions for nushell.
+    CompleteNushell,
     /// Completions for PowerShell.
     CompletePowerShell,
 }
@@ -652,16 +643,64 @@ pub(crate) enum MmapMode {
     Never,
 }
 
-/// A positional argument or a list of paths, in command-line order.
-///
-/// The first positional argument may be interpreted as a pattern later.
+/// Represents a source of input paths to be searched.
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) enum InputSource {
+    /// A positional argument on the command line. Provides a single path.
     PositionalArgument(OsString),
-    /// A file containing LF- or CRLF-terminated paths (`--in`).
+    /// A text file with newline-terminated paths. Comes from the `--in` flag.
     LineTerminated(PathBuf),
-    /// A file containing NUL-terminated paths (`--in0`).
+    /// A binary file with NUL-terminated paths. Comes from the `--in0` flag.
     NulTerminated(PathBuf),
+}
+
+impl InputSource {
+    /// Returns true if this source reads from stdin.
+    pub(crate) fn is_stdin(&self) -> bool {
+        match self {
+            InputSource::PositionalArgument(osarg) => osarg == OsStr::new("-"),
+            InputSource::LineTerminated(path) => path == Path::new("-"),
+            InputSource::NulTerminated(path) => path == Path::new("-"),
+        }
+    }
+
+    /// Returns the command-line flag used for this source.
+    pub(crate) fn flag(&self) -> Option<&str> {
+        match self {
+            InputSource::PositionalArgument(_) => None,
+            InputSource::LineTerminated(_) => Some("--in"),
+            InputSource::NulTerminated(_) => Some("--in0"),
+        }
+    }
+
+    /// Returns whether this input source came from an optional flag.
+    pub(crate) fn is_optional_flag(&self) -> bool {
+        match self {
+            InputSource::PositionalArgument(_) => false,
+            InputSource::LineTerminated(_) => true,
+            InputSource::NulTerminated(_) => true,
+        }
+    }
+}
+
+impl std::fmt::Display for InputSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.is_stdin() {
+            write!(f, "stdin")
+        } else {
+            match self {
+                InputSource::PositionalArgument(osarg) => {
+                    write!(f, "{}", osarg.to_string_lossy())
+                }
+                InputSource::LineTerminated(path) => {
+                    write!(f, "{}", path.display())
+                }
+                InputSource::NulTerminated(path) => {
+                    write!(f, "{}", path.display())
+                }
+            }
+        }
+    }
 }
 
 /// Represents a source of patterns that ripgrep should search for.

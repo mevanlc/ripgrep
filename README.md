@@ -12,42 +12,11 @@ This fork tracks upstream ripgrep and adds a few focused conveniences:
 - shorthand preview modes for `-M/--max-columns`, including a centered preview
   that keeps the first match visible;
 - optional C-style escape interpretation in replacement strings;
-- input path lists from files or stdin, with newline or NUL terminators;
 - built-in file types for archives, compressed files and specific compressed
   tar formats; and
 - support for internal hyphens in custom file type names.
 
 Everything else behaves like upstream ripgrep unless noted below.
-
-### input path lists
-
-`--in <PATH|->` reads files and directories to search from a newline-terminated
-list. `--in0 <PATH|->` uses NUL terminators, supporting filenames containing
-newlines. Use `-` to read the list from stdin:
-
-```console
-$ rg --in paths.txt pattern
-$ find src -print0 | rg --in0 - pattern
-$ rg -l0 first-pattern | rg --in0 - second-pattern
-```
-
-Both options may be repeated and combined with positional paths. Each list is
-expanded where its option appears; duplicates are retained. Entries behave
-like command-line paths: relative paths resolve from the current working
-directory, directories recurse, and explicitly named files bypass discovery
-filters. They also work with `--files`.
-
-`--in` accepts LF and CRLF terminators. All other whitespace and bytes are
-preserved, including newlines under `--in0`. A final path without a terminator
-is accepted. Empty records are errors; a trailing terminator is fine. A
-zero-byte list contributes no paths. If no search paths remain, ripgrep
-searches nothing and exits with status 1 instead of searching CWD or stdin.
-NUL bytes in `--in` are errors. Unix filenames need not be UTF-8; other
-platforms require UTF-8.
-
-Lists are read completely before searching. A list entry of `-` searches
-stdin; `./-` searches a literal filename. Stdin cannot supply a list and also
-supply patterns or searchable contents, or supply more than one list.
 
 ### replacement escapes
 
@@ -156,6 +125,22 @@ $ rg --type-add 'wat-lang:*.wat' -twat-lang pattern
 
 Names must begin and end with a Unicode letter or number. Between them,
 letters, numbers and hyphens are accepted; other punctuation is rejected.
+
+## input path lists
+
+This fork uses ripgrep 16's `--in` and `--in0` flags. `--in` reads paths
+separated by LF or CRLF, and `--in0` reads paths separated by NUL bytes. Use
+`-` as the flag's argument to read the list from stdin. Both flags can be
+repeated and combined with positional paths.
+
+```console
+$ rg --in paths.txt pattern
+$ find src -print0 | rg --in0 - pattern
+$ rg -l0 first-pattern | rg --in0 - second-pattern
+```
+
+If the lists provide zero paths and no positional paths are given, ripgrep
+prints a diagnostic and exits with status 2.
 
 ## building
 
